@@ -1,0 +1,36 @@
+# GamedesignTool — Go 표준 라이브러리만 쓸 예정이라 무시할 것이 적다
+
+# 빌드 결과
+bin/
+*.exe
+*.exe~
+*.test
+
+# Go 도구 부스러기
+*.out
+coverage.txt
+vendor/
+
+# 구운 HTML 산출물 (정본은 상태 파일이고, 이건 언제든 다시 구울 수 있는 파생물이다)
+out/
+
+# 실행 부스러기
+*.log
+
+# OS·편집기 부스러기
+.DS_Store
+Thumbs.db
+*.swp
+
+# AI 도구 개인 로컬 설정
+.claude/settings.local.json
+
+# 로컬 전용 문서 (저장소에 올리지 않는다)
+*.local.md
+
+# 파이썬 훅 부스러기
+__pycache__/
+*.pyc
+
+# 금칙어 목록 — 낱말 자체가 유출이라 올리지 않는다 (.example 만 올린다)
+.claude/hooks/public_guard.words

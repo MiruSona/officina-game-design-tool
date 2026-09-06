@@ -1,0 +1,9 @@
+#!/bin/sh
+# 공개 저장소 검사 — 스테이지된 파일에서 비밀값·개인정보·금칙어를 찾는다.
+ROOT=$(git rev-parse --show-toplevel)
+GUARD="$ROOT/.claude/hooks/public_guard.py"
+if command -v python >/dev/null 2>&1; then
+    python "$GUARD" --staged || exit 1
+else
+    py -3 "$GUARD" --staged || exit 1
+fi
