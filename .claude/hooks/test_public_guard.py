@@ -88,7 +88,7 @@ class WordRuleTest(unittest.TestCase):
 class WordLookupTest(unittest.TestCase):
     """서브모듈 꼴 — 상위/.claude/hooks/public_guard.words 를 거슬러 올라가 찾는다."""
 
-    def build(self, folder, parent_words, child_words):
+    def build(self, folder, parent_words, child_words, self_words=None):
         child = os.path.join(folder, "sub")
         for base, content in ((folder, parent_words), (child, child_words)):
             if content is None:
@@ -100,6 +100,9 @@ class WordLookupTest(unittest.TestCase):
 
         hook_dir = os.path.join(child, ".claude", "hooks")
         os.makedirs(hook_dir, exist_ok=True)
+        if self_words is not None:
+            with open(os.path.join(hook_dir, "public_guard.self"), "w", encoding="utf-8") as handle:
+                handle.write(self_words)
         guard = os.path.join(hook_dir, "public_guard.py")
         with open(SCRIPT, encoding="utf-8") as src, open(guard, "w", encoding="utf-8") as dst:
             dst.write(src.read())
@@ -126,6 +129,15 @@ class WordLookupTest(unittest.TestCase):
             self.assertIn("word", out)
             self.assertIn("doc.md:1", out)
             self.assertNotIn("doc.md:2", out)
+
+    def test_self_file_removes_own_name(self):
+        with tempfile.TemporaryDirectory() as folder:
+            child, guard, target = self.build(
+                folder, "위쪽낱말\n", None, self_words="# 자기 이름\n위쪽낱말\n"
+            )
+            code, out = self.run_guard(child, guard, target)
+            self.assertEqual(0, code, out)
+            self.assertEqual("", out)
 
     def test_two_lists_merged(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -42,6 +42,10 @@
 
 하나도 없으면 `word` 규칙 자체를 건너뛴다.
 
+**자기 이름은 `public_guard.self` 에 적는다** (스크립트와 같은 폴더, 한 줄 하나, `#` 주석).
+여기 적힌 낱말은 합친 목록에서 뺀다 — 부모 목록에 제 툴 이름이 있어도 제 문서가 걸리지 않는다.
+공개해도 되는 값이라 `.words` 와 달리 git 에 넣는다.
+
 **공개 저장소에는 실제 목록을 올리지 않는다.** 목록에 적힌 낱말 자체가 새는 것이기 때문이다.
 `.gitignore` 에 `.claude/hooks/public_guard.words` 를 넣고 `public_guard.words.example` 만 올린다.
 진짜 목록은 비공개 저장소(게임 저장소)의 `.claude/hooks/public_guard.words` 에 둔다 — 서브모듈이 알아서 찾는다.

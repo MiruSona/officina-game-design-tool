@@ -17,6 +17,7 @@ MAX_BYTES = 2 * 1024 * 1024
 SKIP_MARK = "guard:ok"
 SKIP_DIRS = (".claude/hooks/", ".githooks/")
 WORDS_FILE = "public_guard.words"
+SELF_FILE = "public_guard.self"
 
 # 규칙 이름 -> 정규식. 순서대로 검사해 걸린 것을 모두 보고한다.
 RULES = [
@@ -126,7 +127,10 @@ def load_words(script_dir, extra_path=None, start_dir=None):
         for word in read_words_file(path):
             if word not in words:
                 words.append(word)
-    return words
+
+    # 자기 저장소 이름은 부모 목록에 있어도 뺀다. 없으면 아무것도 안 뺀다.
+    own = read_words_file(os.path.join(script_dir, SELF_FILE))
+    return [word for word in words if word not in own]
 
 
 def scan_text(path, text, words):
