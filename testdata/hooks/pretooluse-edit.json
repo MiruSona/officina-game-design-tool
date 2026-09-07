@@ -1,0 +1,12 @@
+{
+  "session_id": "test-session",
+  "cwd": ".",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Edit",
+  "tool_input": {
+    "file_path": "Docs/Design/00-컨셉.md",
+    "old_string": "| 다섯 | … |\n",
+    "new_string": "",
+    "replace_all": false
+  }
+}

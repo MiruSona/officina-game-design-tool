@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>기획 상태 한 장</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #ffffff; --line: #d9d9d4; --ink: #24241f;
+    --dim: #8a8a80; --on: #2f6f4f; --now: #1f5fa8; --warn: #a8531f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px; background: var(--bg); color: var(--ink);
+         font-family: "Malgun Gothic", "맑은 고딕", system-ui, sans-serif; font-size: 14px; line-height: 1.6; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 10px; color: var(--dim); font-weight: 600; }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .stepper { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; }
+  .step { border: 1px solid var(--line); border-radius: 6px; padding: 8px 6px; text-align: center; background: #fbfbfa; }
+  .step .no { font-size: 11px; color: var(--dim); }
+  .step .nm { font-size: 12px; }
+  .step.done { background: #eaf3ee; border-color: var(--on); color: var(--on); }
+  .step.now { background: #e8f0fa; border-color: var(--now); color: var(--now); font-weight: 700; }
+  .step.todo { opacity: .45; }
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .tile .v { font-size: 26px; font-weight: 700; }
+  .tile .k { font-size: 12px; color: var(--dim); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; color: var(--dim); font-weight: 600; }
+  .tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; border: 1px solid var(--line); }
+  .tag.통과 { background: #eaf3ee; color: var(--on); border-color: var(--on); }
+  .tag.불통 { background: #fbeee6; color: var(--warn); border-color: var(--warn); }
+  ul { margin: 0; padding-left: 18px; }
+  li { margin-bottom: 2px; }
+  .no-mark { color: var(--dim); }
+  .yes-mark { color: var(--on); }
+  .note { color: var(--warn); font-weight: 600; }
+  footer { color: var(--dim); font-size: 12px; margin-top: 8px; }
+  pre.mermaid { background: #fbfbfa; border: 1px dashed var(--line); border-radius: 6px; padding: 12px; overflow-x: auto; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>기획 상태 — {{.StageNo}}단계 「{{.StageName}}」 · {{.Round}}판째</h1>
+  <div class="no-mark">끝났다고 보는 기준 : {{.StageDone}}</div>
+  {{if .Doubt}}<p class="note">{{.Round}}판째입니다 — 이번에도 통과 못 하면 컨셉이나 기둥을 의심할 때입니다.</p>{{end}}
+
+  <div class="card">
+    <h2>① 9단계</h2>
+    <div class="stepper">
+      {{range .Steps}}<div class="step {{.Class}}"><div class="no">{{.Number}}</div><div class="nm">{{.Name}}</div></div>{{end}}
+    </div>
+  </div>
+
+  <div class="tiles">
+    <div class="tile"><div class="v">{{.BackCount}}회</div><div class="k">되돌아간 횟수</div></div>
+    <div class="tile"><div class="v">{{.PassCount}} / {{.AskCount}}</div><div class="k">이번 판 물음 통과</div></div>
+    <div class="tile"><div class="v">{{.Days}}일째</div><div class="k">이번 판 ({{.RoundStart}} 시작)</div></div>
+  </div>
+
+  <div class="card">
+    <h2>③ 이번 판 물음</h2>
+    {{if .Asks}}
+    <table>
+      <tr><th>상태</th><th>id</th><th>물음</th><th>기준</th></tr>
+      {{range .Asks}}<tr>
+        <td><span class="tag {{.Status}}">{{.Status}}</span></td>
+        <td>{{.ID}}</td>
+        <td>{{.Question}}</td>
+        <td>{{.CritCount}}줄</td>
+      </tr>{{end}}
+    </table>
+    {{else}}<p class="no-mark">아직 이번 판 물음이 없습니다. <code>stage ask</code> 로 적습니다.</p>{{end}}
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <h2>④ 기둥</h2>
+      {{if .Pillars}}<ul>{{range .Pillars}}<li>{{.}}</li>{{end}}</ul>
+      {{else}}<p class="no-mark">{{.PillarNote}}</p>{{end}}
+    </div>
+    <div class="card">
+      <h2>⑤ 문서 뼈대</h2>
+      <ul>
+        {{range .Docs}}<li>{{if .Exists}}<span class="yes-mark">있음</span>{{else}}<span class="no-mark">없음</span>{{end}} — {{.Name}}</li>{{end}}
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>⑥ 되돌아가는 고리</h2>
+    <pre class="mermaid">stateDiagram-v2
+    [*] --> 컨셉
+    컨셉 --> 기둥
+    기둥 --> 코어루프
+    코어루프 --> 물음묶음
+    물음묶음 --> 프로토타입
+    프로토타입 --> 검증
+    검증 --> 기능자르기 : 다 통과
+    검증 --> 코어루프 : 모양이 틀렸다
+    검증 --> 프로토타입 : 숫자만 틀렸다
+    검증 --> 물음묶음 : 기준이 틀렸다
+    검증 --> 컨셉 : 3판 돌아도 불통
+    기능자르기 --> 세로조각
+    세로조각 --> 확장
+    세로조각 --> 코어루프 : 재미없다
+</pre>
+    <p class="no-mark">3 → 4 → 5 → 6 → 3 (불통이면 되돌아간다) · 3판 돌아도 통과 못 하면 1~2단계로.</p>
+  </div>
+
+  <footer>
+    {{.BakedAt}} 에 구웠습니다. 이 화면은 사진입니다 — 정본은 <code>Docs/Todo/기획상태.json</code> 입니다.
+  </footer>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<script>
+  if (window.mermaid) { mermaid.initialize({ startOnLoad: true, theme: "neutral" }); }
+</script>
+</body>
+</html>

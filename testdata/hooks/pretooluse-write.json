@@ -1,0 +1,11 @@
+{
+  "session_id": "test-session",
+  "transcript_path": "/tmp/transcript.jsonl",
+  "cwd": ".",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Write",
+  "tool_input": {
+    "file_path": "Docs/Design/노트.md",
+    "content": "# 이름 규칙에 안 맞는 문서\n"
+  }
+}
