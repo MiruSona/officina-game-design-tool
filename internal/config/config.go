@@ -2,6 +2,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -98,11 +99,14 @@ func Load(root string) (Config, error) {
 		return cfg, fmt.Errorf("설정 파일을 못 읽었습니다 (%s) : %v", RelPath, err)
 	}
 	var f file
-	if err := json.Unmarshal(raw, &f); err != nil {
+	// 모르는 칸은 오타로 보고 거부한다. 조용히 무시하면 안 먹은 설정을 찾기 어렵다.
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&f); err != nil {
 		return cfg, fmt.Errorf("설정 파일이 깨졌습니다 (%s) : %v", RelPath, err)
 	}
 	apply(&cfg, f)
-	if err := check(cfg); err != nil {
+	if err := check(cfg, f); err != nil {
 		return cfg, fmt.Errorf("설정 파일 값이 잘못됐습니다 (%s) : %v", RelPath, err)
 	}
 	return cfg, nil
@@ -150,8 +154,11 @@ func apply(cfg *Config, f file) {
 	}
 }
 
-// check 는 덮은 뒤 값이 말이 되는지 본다.
-func check(cfg Config) error {
+// check 는 덮은 뒤 값이 말이 되는지 본다. 적힌 배열 길이도 여기서 본다.
+func check(cfg Config, f file) error {
+	if err := checkPairs(f); err != nil {
+		return err
+	}
 	if len(cfg.Stages) < 2 {
 		return errors.New("단계는 둘 이상이어야 합니다")
 	}
@@ -169,6 +176,24 @@ func check(cfg Config) error {
 	}
 	if cfg.DoubtRounds < 1 {
 		return errors.New("판의심횟수는 1 이상이어야 합니다")
+	}
+	return nil
+}
+
+// checkPairs 는 [최소, 최대] 꼴 칸이 정말 둘인지 본다. 길이가 다르면 덮기가 조용히 안 먹는다.
+func checkPairs(f file) error {
+	pairs := []struct {
+		name string
+		val  []int
+	}{
+		{"기둥개수", f.Pillars},
+		{"물음개수", f.Asks},
+		{"고리단계", f.Loop},
+	}
+	for _, p := range pairs {
+		if p.val != nil && len(p.val) != 2 {
+			return fmt.Errorf("%s 은 값 두 개짜리 배열이어야 합니다 (지금 %d개)", p.name, len(p.val))
+		}
 	}
 	return nil
 }

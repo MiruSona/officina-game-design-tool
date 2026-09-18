@@ -88,8 +88,8 @@ class WordRuleTest(unittest.TestCase):
 class WordLookupTest(unittest.TestCase):
     """서브모듈 꼴 — 상위/.claude/hooks/public_guard.words 를 거슬러 올라가 찾는다."""
 
-    def build(self, folder, parent_words, child_words, self_words=None):
-        child = os.path.join(folder, "sub")
+    def build(self, folder, parent_words, child_words, self_words=None, doc_text=None, child_name="sub"):
+        child = os.path.join(folder, child_name)
         for base, content in ((folder, parent_words), (child, child_words)):
             if content is None:
                 continue
@@ -109,7 +109,7 @@ class WordLookupTest(unittest.TestCase):
 
         target = os.path.join(child, "doc.md")
         with open(target, "w", encoding="utf-8") as handle:
-            handle.write("위쪽낱말 이야기\n아래쪽낱말 이야기\n")
+            handle.write(doc_text if doc_text is not None else "위쪽낱말 이야기\n아래쪽낱말 이야기\n")
         return child, guard, target
 
     def run_guard(self, cwd, guard, target):
@@ -119,33 +119,104 @@ class WordLookupTest(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        return proc.returncode, proc.stdout.decode("utf-8", errors="replace")
+        return (
+            proc.returncode,
+            proc.stdout.decode("utf-8", errors="replace"),
+            proc.stderr.decode("utf-8", errors="replace"),
+        )
 
     def test_parent_words_found(self):
         with tempfile.TemporaryDirectory() as folder:
             child, guard, target = self.build(folder, "# 부모 목록\n위쪽낱말\n", None)
-            code, out = self.run_guard(child, guard, target)
-            self.assertEqual(2, code, out)
+            code, out, err = self.run_guard(child, guard, target)
+            self.assertEqual(2, code, out + err)
             self.assertIn("word", out)
             self.assertIn("doc.md:1", out)
             self.assertNotIn("doc.md:2", out)
 
     def test_self_file_removes_own_name(self):
+        """.self 에 적은 낱말이 저장소 이름과 같으면 목록에서 뺀다."""
         with tempfile.TemporaryDirectory() as folder:
             child, guard, target = self.build(
-                folder, "위쪽낱말\n", None, self_words="# 자기 이름\n위쪽낱말\n"
+                folder,
+                "우리툴\n",
+                None,
+                self_words="# 자기 이름\n우리툴\n",
+                doc_text="우리툴 이야기\n",
+                child_name="우리툴",
             )
-            code, out = self.run_guard(child, guard, target)
-            self.assertEqual(0, code, out)
+            code, out, err = self.run_guard(child, guard, target)
+            self.assertEqual(0, code, out + err)
             self.assertEqual("", out)
+
+    def test_self_file_ignores_other_words(self):
+        """저장소 이름이 아닌 낱말은 .self 에 넣어도 여전히 잡힌다 (경고까지 찍는다)."""
+        with tempfile.TemporaryDirectory() as folder:
+            child, guard, target = self.build(
+                folder,
+                "위쪽낱말\n",
+                None,
+                self_words="위쪽낱말\n",
+                child_name="우리툴",
+            )
+            code, out, err = self.run_guard(child, guard, target)
+            self.assertEqual(2, code, out + err)
+            self.assertIn("doc.md:1", out)
+            self.assertIn("저장소 이름", err)
+
+    def test_self_file_is_scanned(self):
+        """.self 자체는 훅 폴더 안이어도 검사 대상에서 빼지 않는다."""
+        self.assertFalse(public_guard.should_skip_path(".claude/hooks/public_guard.self", SCRIPT))
+        self.assertTrue(public_guard.should_skip_path(".claude/hooks/other.py", SCRIPT))
+
+    def test_parent_hook_uses_submodule_self(self):
+        """부모 저장소 훅이 서브모듈 문서를 검사할 때 서브모듈의 .self 가 먹는다."""
+        with tempfile.TemporaryDirectory() as folder:
+            parent_hooks = os.path.join(folder, ".claude", "hooks")
+            os.makedirs(parent_hooks)
+            with open(os.path.join(parent_hooks, "public_guard.words"), "w", encoding="utf-8") as handle:
+                handle.write("우리툴\n위쪽낱말\n")
+            guard = os.path.join(parent_hooks, "public_guard.py")
+            with open(SCRIPT, encoding="utf-8") as src, open(guard, "w", encoding="utf-8") as dst:
+                dst.write(src.read())
+
+            child = os.path.join(folder, "우리툴")
+            child_hooks = os.path.join(child, ".claude", "hooks")
+            os.makedirs(child_hooks)
+            with open(os.path.join(child_hooks, "public_guard.self"), "w", encoding="utf-8") as handle:
+                handle.write("우리툴\n")
+            target = os.path.join(child, "doc.md")
+            with open(target, "w", encoding="utf-8") as handle:
+                handle.write("우리툴 설명\n")
+
+            code, out, err = self.run_guard(folder, guard, target)
+            self.assertEqual(0, code, out + err)
+
+            # 같은 문서라도 저장소 이름이 아닌 금칙어는 여전히 잡힌다.
+            with open(target, "w", encoding="utf-8") as handle:
+                handle.write("우리툴 설명\n위쪽낱말 설명\n")
+            code, out, err = self.run_guard(folder, guard, target)
+            self.assertEqual(2, code, out + err)
+            self.assertIn("doc.md:2", out)
+            self.assertNotIn("doc.md:1", out)
 
     def test_two_lists_merged(self):
         with tempfile.TemporaryDirectory() as folder:
             child, guard, target = self.build(folder, "위쪽낱말\n", "아래쪽낱말\n")
-            code, out = self.run_guard(child, guard, target)
-            self.assertEqual(2, code, out)
+            code, out, err = self.run_guard(child, guard, target)
+            self.assertEqual(2, code, out + err)
             self.assertIn("doc.md:1", out)
             self.assertIn("doc.md:2", out)
+
+    def test_words_file_with_bom(self):
+        """BOM 이 붙은 목록 파일도 첫 낱말을 제대로 읽는다."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "public_guard.words")
+            with open(path, "w", encoding="utf-8-sig") as handle:
+                handle.write("가제달빛농장\n아래쪽낱말\n")
+            words = public_guard.load_words(folder, start_dir=folder)
+            self.assertEqual(["가제달빛농장", "아래쪽낱말"], words)
+            self.assertIn("word", rules_of(scan("우리 가제달빛농장 이야기", words)))
 
 
 class ScanFileTest(unittest.TestCase):

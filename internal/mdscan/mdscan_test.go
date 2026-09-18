@@ -70,6 +70,13 @@ func TestWontRows(t *testing.T) {
 	}
 }
 
+func TestWontRowsAcceptsCurlyApostrophe(t *testing.T) {
+	src := "# 기능 목록\n\n| 칸 | 기능 |\n| --- | --- |\n| Won’t | 겨루기 |\n| **Won’t** | 소리 |\n"
+	if got := WontRows(src); got != 2 {
+		t.Fatalf("둥근 따옴표 Won’t = %d, 2 여야 한다", got)
+	}
+}
+
 func TestLinesCountsBlankLines(t *testing.T) {
 	if got := Lines("한 줄\n\n세 줄\n"); got != 3 {
 		t.Fatalf("줄 수 = %d, 3 이어야 한다", got)

@@ -25,8 +25,15 @@ func cmdInit(args []string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := state.Load(dir); err == nil && !*force {
-		return fail(exitUsage, "%s 이 이미 있습니다. 덮어쓰려면 --force 를 붙이세요.", state.RelPath)
+	if !*force {
+		// 깨졌거나 모르는 판인 파일을 조용히 덮지 않는다. --force 로만 지운다.
+		_, err := state.Load(dir)
+		if err == nil {
+			return fail(exitUsage, "%s 이 이미 있습니다. 덮어쓰려면 --force 를 붙이세요.", state.RelPath)
+		}
+		if !errors.Is(err, state.ErrMissing) {
+			return fail(exitCorrupt, "%v — 버리고 새로 만들려면 --force 를 붙이세요.", err)
+		}
 	}
 	now := time.Now()
 	st := state.New(now)

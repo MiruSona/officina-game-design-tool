@@ -59,15 +59,25 @@ func SystemMessage(text string) ([]byte, error) {
 }
 
 // Applied 는 「쓰고 난 뒤」의 내용을 미리 만든다. Write 는 그대로, Edit 는 고침을 적용한 결과다.
+// 저장소가 CRLF 로 체크아웃되면 디스크는 CRLF, old_string 은 LF 라 그냥은 안 맞는다.
+// 검사에만 쓰는 값이라 양쪽을 LF 로 맞춰 대조하고 결과도 LF 로 둔다.
 func Applied(tool string, in ToolInput, disk string) string {
 	if tool == "Write" {
 		return in.Content
 	}
-	if in.OldString == "" || !strings.Contains(disk, in.OldString) {
-		return disk
+	src := toLF(disk)
+	old := toLF(in.OldString)
+	if old == "" || !strings.Contains(src, old) {
+		return src
 	}
+	replacement := toLF(in.NewString)
 	if in.ReplaceAll {
-		return strings.ReplaceAll(disk, in.OldString, in.NewString)
+		return strings.ReplaceAll(src, old, replacement)
 	}
-	return strings.Replace(disk, in.OldString, in.NewString, 1)
+	return strings.Replace(src, old, replacement, 1)
+}
+
+// toLF 는 줄끝을 LF 로 맞춘다.
+func toLF(s string) string {
+	return strings.ReplaceAll(s, "\r\n", "\n")
 }

@@ -165,6 +165,8 @@ func cells(line string) []string {
 func cellWord(cell string) string {
 	t := strings.TrimSpace(cell)
 	t = strings.Trim(t, "*_`")
+	// 편집기가 바꿔 놓는 둥근 따옴표를 곧은 것으로 맞춘다 (Won’t → Won't).
+	t = strings.ReplaceAll(t, "’", "'")
 	t = strings.TrimSpace(t)
 	if idx := strings.IndexAny(t, " \t("); idx > 0 {
 		t = t[:idx]

@@ -3,3 +3,6 @@
 .githooks/** text eol=lf
 *.py text eol=lf
 *.sh text eol=lf
+
+# 시험 자료 — CRLF 체크아웃 재현용 (줄끝을 고정한다)
+testdata/crlf/** text eol=crlf

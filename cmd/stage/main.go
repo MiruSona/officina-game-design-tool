@@ -98,13 +98,13 @@ func run(args []string) int {
 	if err == nil {
 		return exitOK
 	}
+	if errors.Is(err, flag.ErrHelp) {
+		return exitOK
+	}
 	var ce *codedError
 	if errors.As(err, &ce) {
 		fmt.Fprintln(os.Stderr, ce.msg)
 		return ce.code
-	}
-	if errors.Is(err, flag.ErrHelp) {
-		return exitUsage
 	}
 	fmt.Fprintln(os.Stderr, err.Error())
 	return exitRead
@@ -121,6 +121,10 @@ func newFlags(name string) (*flag.FlagSet, *string) {
 // parseFlags 는 옵션을 읽는다. Go 의 flag 은 첫 인자에서 멈추므로 옵션을 앞으로 모아 준다.
 func parseFlags(fs *flag.FlagSet, args []string) error {
 	if err := fs.Parse(reorder(fs, args)); err != nil {
+		// -h 는 도움말을 이미 찍었다. 오류로 감싸지 않고 그대로 올려 종료 0 이 되게 한다.
+		if errors.Is(err, flag.ErrHelp) {
+			return err
+		}
 		return fail(exitUsage, "옵션이 잘못됐습니다 (stage %s)", fs.Name())
 	}
 	return nil

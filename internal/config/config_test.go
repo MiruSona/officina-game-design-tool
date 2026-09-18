@@ -36,7 +36,7 @@ func TestLoadWithoutFileUsesDefault(t *testing.T) {
 }
 
 func TestLoadOverwritesOnlyWrittenFields(t *testing.T) {
-	dir := writeConfig(t, `{ "컨셉줄상한": 100, "기둥개수": [2, 5], "코드폴더": "Assets/Scripts", "모르는칸": 1 }`)
+	dir := writeConfig(t, `{ "컨셉줄상한": 100, "기둥개수": [2, 5], "코드폴더": "Assets/Scripts" }`)
 	cfg, err := Load(dir)
 	if err != nil {
 		t.Fatalf("읽기 실패 : %v", err)
@@ -49,6 +49,27 @@ func TestLoadOverwritesOnlyWrittenFields(t *testing.T) {
 	}
 	if cfg.DesignDir != "Docs/Design" || cfg.AskMin != 2 {
 		t.Fatal("안 적은 칸은 그대로여야 한다")
+	}
+}
+
+func TestLoadRejectsUnknownKey(t *testing.T) {
+	dir := writeConfig(t, `{ "컨셉줄상한": 100, "모르는칸": 1 }`)
+	if _, err := Load(dir); err == nil {
+		t.Fatal("모르는 칸은 오타이므로 거부해야 한다")
+	}
+}
+
+func TestLoadRejectsWrongPairLength(t *testing.T) {
+	cases := []string{
+		`{ "기둥개수": [3] }`,
+		`{ "물음개수": [2, 4, 6] }`,
+		`{ "고리단계": [] }`,
+	}
+	for _, body := range cases {
+		dir := writeConfig(t, body)
+		if _, err := Load(dir); err == nil {
+			t.Fatalf("길이가 2 가 아닌 배열은 거부해야 한다 : %s", body)
+		}
 	}
 }
 

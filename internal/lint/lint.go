@@ -194,6 +194,7 @@ func orderFindings(in Input, name string) []Finding {
 
 // codeOrderFindings 는 시스템 문서 없이 코드를 새로 쓰는 것을 막는다(L2).
 func codeOrderFindings(in Input, rel string) []Finding {
+	want := ""
 	for _, entry := range in.Cfg.DocSkeleton {
 		if !strings.Contains(entry, "*") {
 			continue
@@ -201,8 +202,15 @@ func codeOrderFindings(in Input, rel string) []Finding {
 		if skeletonExists(in, entry) {
 			return nil
 		}
+		if want == "" {
+			want = entry
+		}
 	}
-	msg := fmt.Sprintf("%s : 시스템 코드를 새로 쓰기 전에 `03-시스템-<이름>.md` 를 먼저 씁니다", rel)
+	// 문서 뼈대에 와일드카드 항목이 없으면 막을 근거가 없다.
+	if want == "" {
+		return nil
+	}
+	msg := fmt.Sprintf("%s : 시스템 코드를 새로 쓰기 전에 `%s` 를 먼저 씁니다", rel, strings.ReplaceAll(want, "*", "<이름>"))
 	return []Finding{{"L2", msg, true}}
 }
 

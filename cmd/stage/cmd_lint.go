@@ -112,10 +112,11 @@ func cmdDone(args []string) error {
 	if err != nil {
 		return quietOrFail(*hook, fail(exitRead, "%v", err))
 	}
+	// 할 일에 「기억 1건」이 늘 들어가므로, 빈 목록은 아직 판이 안 끝났다는 뜻뿐이다.
 	missing := roundTodos(dir, cfg, st)
 	if len(missing) == 0 {
 		if !*hook {
-			fmt.Println("판 끝 할 일이 다 됐거나, 아직 판이 안 끝났습니다.")
+			fmt.Println("아직 판이 안 끝났습니다 — 이번 판 물음이 없거나 판정이 남았습니다.")
 		}
 		return nil
 	}
@@ -166,7 +167,8 @@ func roundTodos(root string, cfg config.Config, st *state.State) []string {
 	if rest > 0 {
 		return nil
 	}
-	start, err := time.Parse("2006-01-02", st.RoundStart)
+	// 파일 mtime 이 로컬 시각이라 판시작일도 로컬로 읽는다 (DaysIn 과 같은 꼴).
+	start, err := time.ParseInLocation("2006-01-02", st.RoundStart, time.Local)
 	if err != nil {
 		return nil
 	}
@@ -174,6 +176,7 @@ func roundTodos(root string, cfg config.Config, st *state.State) []string {
 	if !newerThan(paths.Join(root, historyDir), start, true) {
 		missing = append(missing, "플레이 기록 한 편")
 	}
+	// 기억 저장소를 부르지 않으므로 확인할 길이 없다. 판마다 그냥 다시 묻는다 (설계 그대로).
 	missing = append(missing, "기억 1건 (결정과 공수 눈금)")
 	if !newerThan(paths.Join(root, progressDoc), start, false) {
 		missing = append(missing, "진행 상황 문서의 「이미 정한 것」·「지금 할 일」 고치기")

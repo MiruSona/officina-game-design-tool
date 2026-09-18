@@ -160,6 +160,40 @@ func TestCodeOrderNeedsSystemDoc(t *testing.T) {
 	}
 }
 
+func TestCodeOrderSkipsWithoutWildcardEntry(t *testing.T) {
+	root := t.TempDir()
+	mkdir(t, filepath.Join(root, "Docs", "Design"))
+	cfg := config.Default()
+	cfg.CodeDir = "Src"
+	cfg.DocSkeleton = []string{"00-컨셉.md", "01-코어루프.md"}
+	tgt := Target{Rel: "Src/새것.cs", Existed: false}
+	if Blocked(Run(Input{Root: root, Cfg: cfg, Targets: []Target{tgt}})) {
+		t.Fatal("문서 뼈대에 와일드카드가 없으면 코드를 막지 않는다")
+	}
+}
+
+func TestCodeOrderMessageUsesConfigEntry(t *testing.T) {
+	root := t.TempDir()
+	mkdir(t, filepath.Join(root, "Docs", "Design"))
+	cfg := config.Default()
+	cfg.CodeDir = "Src"
+	cfg.DocSkeleton = []string{"00-컨셉.md", "10-구조-*.md"}
+	tgt := Target{Rel: "Src/새것.cs", Existed: false}
+	fs := Run(Input{Root: root, Cfg: cfg, Targets: []Target{tgt}})
+	if !Blocked(fs) {
+		t.Fatal("시스템 문서 없이 코드를 새로 쓰면 막는다")
+	}
+	found := false
+	for _, f := range fs {
+		if f.Code == "L2" && strings.Contains(f.Msg, "10-구조-<이름>.md") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("설정에 적은 항목 이름이 메시지에 없다 : %v", fs)
+	}
+}
+
 func TestAskCountWarnsOutsideRange(t *testing.T) {
 	root := t.TempDir()
 	cfg := config.Default()

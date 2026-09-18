@@ -64,6 +64,9 @@ def is_local_file(path):
 def should_skip_path(path, script_path):
     """훅 폴더와 검사기 자신은 건너뛴다."""
     normalized = path.replace("\\", "/")
+    # .self 만은 훅 폴더 안이어도 검사한다. 여기 적은 낱말은 그대로 공개되기 때문이다.
+    if os.path.basename(normalized) == SELF_FILE:
+        return False
     if any(part in normalized for part in SKIP_DIRS):
         return True
     if os.path.basename(normalized) == os.path.basename(script_path):
@@ -77,7 +80,7 @@ def read_words_file(path):
         return []
 
     words = []
-    with open(path, encoding="utf-8", errors="replace") as handle:
+    with open(path, encoding="utf-8-sig", errors="replace") as handle:
         for raw in handle:
             line = raw.strip()
             if not line or line.startswith("#"):
@@ -127,9 +130,86 @@ def load_words(script_dir, extra_path=None, start_dir=None):
         for word in read_words_file(path):
             if word not in words:
                 words.append(word)
+    return words
 
-    # 자기 저장소 이름은 부모 목록에 있어도 뺀다. 없으면 아무것도 안 뺀다.
-    own = read_words_file(os.path.join(script_dir, SELF_FILE))
+
+def repo_names(base):
+    """그 저장소를 가리키는 이름들 (폴더 이름 · git remote 이름). 전부 소문자."""
+    root = repo_root(base)
+    names = {
+        os.path.basename(os.path.abspath(root)).lower(),
+        os.path.basename(os.path.abspath(base)).lower(),
+    }
+
+    try:
+        out = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            cwd=root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        out = b""
+    url = out.decode("utf-8", errors="replace").strip().rstrip("/")
+    if url:
+        name = url.rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+        if name.endswith(".git"):
+            name = name[:-4]
+        names.add(name.lower())
+
+    names.discard("")
+    return names
+
+
+# 폴더 -> 검증을 통과한 .self 낱말. 같은 폴더를 여러 번 읽지 않으려고 둔다.
+SELF_CACHE = {}
+
+
+def read_self_words(base):
+    """<base>/.claude/hooks/public_guard.self 에서 그 저장소 이름과 맞는 낱말만 읽는다."""
+    key = os.path.abspath(base)
+    if key in SELF_CACHE:
+        return SELF_CACHE[key]
+
+    path = os.path.join(key, ".claude", "hooks", SELF_FILE)
+    words = read_words_file(path)
+    kept = []
+    if words:
+        names = repo_names(key)
+        for word in words:
+            if word in names:
+                kept.append(word)
+            else:
+                print(
+                    f"{path} : 저장소 이름이 아니라 무시한다 : {mask(word)}",
+                    file=sys.stderr,
+                )
+
+    SELF_CACHE[key] = kept
+    return kept
+
+
+def self_words_for(path):
+    """검사 대상 파일 자리에서 부모로 거슬러 올라가며 .self 낱말을 모은다."""
+    words = []
+    current = os.path.dirname(os.path.abspath(path))
+    while True:
+        for word in read_self_words(current):
+            if word not in words:
+                words.append(word)
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+    return words
+
+
+def words_for_path(path, words):
+    """그 파일이 속한 저장소의 이름은 금칙어에서 뺀다."""
+    own = self_words_for(path)
+    if not own:
+        return words
     return [word for word in words if word not in own]
 
 
@@ -172,7 +252,7 @@ def scan_file(path, words, script_path):
     if b"\x00" in raw:
         return []
 
-    return scan_text(path, raw.decode("utf-8", errors="replace"), words)
+    return scan_text(path, raw.decode("utf-8", errors="replace"), words_for_path(path, words))
 
 
 def git_files(repo, args):
@@ -217,7 +297,7 @@ def run_hook(words, script_path):
     hits = []
     if is_local_file(path):
         hits.append((path, 0, "localfile", os.path.basename(path)))
-    hits.extend(scan_text(path, content, words))
+    hits.extend(scan_text(path, content, words_for_path(path, words)))
 
     if not hits:
         return 0

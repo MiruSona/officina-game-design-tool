@@ -63,6 +63,26 @@ func TestApplied(t *testing.T) {
 	}
 }
 
+// 이 저장소는 CRLF 로 체크아웃된다. 훅이 주는 old_string 은 LF 라 그냥 대조하면 안 맞는다.
+func TestAppliedCRLFDisk(t *testing.T) {
+	raw, err := os.ReadFile("../../testdata/crlf/컨셉-crlf.md")
+	if err != nil {
+		t.Fatalf("CRLF 시험 자료를 못 읽었다 : %v", err)
+	}
+	disk := string(raw)
+	if !strings.Contains(disk, "\r\n") {
+		t.Fatalf("시험 자료가 CRLF 가 아니다 (.gitattributes 확인) : %q", disk)
+	}
+	in := ToolInput{OldString: "## 기둥\n", NewString: "## 기둥 셋\n"}
+	got := Applied("Edit", in, disk)
+	if !strings.Contains(got, "## 기둥 셋\n") {
+		t.Fatalf("CRLF 디스크에 고침이 안 먹었다 : %q", got)
+	}
+	if strings.Contains(got, "\r") {
+		t.Fatalf("검사용 내용은 LF 여야 한다 : %q", got)
+	}
+}
+
 func TestSystemMessage(t *testing.T) {
 	raw, err := SystemMessage("판 끝 할 일이 남았습니다")
 	if err != nil {
