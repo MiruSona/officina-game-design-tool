@@ -39,6 +39,9 @@
 | `stage ask "<물음>" --crit "…"` | 이번 판 물음과 판정 기준을 적는다 |
 | `stage check <물음id> pass\|fail --note "…"` | 검증 단계의 통과/불통을 적는다 |
 | `stage lint [<파일…>]` | 훅이 부르는 **모양 검사** — 문서 순서 · 기둥 개수 · 필수 칸이 비었나 · 파일 이름 규칙 |
+| `stage lint --changed` | git 이 본 변경분(작업 트리 + 스테이지)을 **스스로 모아** 검사한다. 목록을 손으로 안 모아도 된다 |
+| `stage lint --since <ref>` | `<ref>`→HEAD 의 **커밋된** 변경분을 검사한다. 이미 커밋해서 `--changed` 가 0개로 떨어질 때 쓴다 |
+| `stage lint --verbose` | 파일마다 **어느 검사가 돌았고 무엇을 왜 건너뛰었나**를 같이 찍는다 |
 | `stage done` | 판 끝 할 일이 빠졌는지 본다 (경고만) |
 | `stage dash` | 아래 ②. 정적 HTML 한 장을 굽는다 |
 
@@ -55,7 +58,11 @@
 | --- | --- | --- | --- |
 | `SessionStart` | 세션을 열 때 | `stage show --hook` | 종료 0 + stdout 이 문맥에 들어간다. 상태 파일이 없어도 안 죽는다 |
 | `PreToolUse` (Write\|Edit) | 문서·코드를 쓰기 직전 | `stage lint --hook` | stdin 으로 훅 JSON 을 받는다. 막을 때 **종료 2 + stderr 에 까닭** |
-| `Stop` | 한 판이 끝날 때 | `stage done --hook` | 빠진 것이 있으면 `{"systemMessage": "…"}` 한 줄. **막지 않는다** |
+| `Stop` | 한 판이 끝날 때 | `stage done --hook` | 빠진 것이 있으면 `{"systemMessage": "…"}` 한 줄. **막지 않는다**. **같은 세션·같은 내용이면 한 번만** 뜬다 |
+
+**훅을 안 타는 판(서브에이전트 · `--bare` 하네스)은 끝에 메인 세션이 `stage lint --changed`(또는 `stage lint <파일…>`)를 직접 돌린다.**
+서브에이전트가 **커밋까지 해 버렸으면** `--changed` 는 0개로 떨어진다 — 그때는 `stage lint --since <ref>` 로 본다.
+**기획문서폴더의 하위 폴더는 검사 밖이다** — 그래서 날짜 이름 설계 문서는 하위 폴더에 둔다 (`Docs/Design/세로조각/2026-09-18-….md`).
 
 훅 조각은 붙은 저장소의 `.claude/settings.json` 에 넣는다. 자세한 꼴은 설계 문서 5장.
 **`bin/` 은 gitignore 라 받은 직후에는 exe 가 없다** — 그때 훅은 그냥 실패하고 아무것도 막지 않으니
@@ -83,7 +90,7 @@
 ## 폴더 구조
 
 ```
-README.md · LICENSE · .gitignore · go.mod
+README.md · LICENSE · .gitignore · go.mod · build.ps1
 .claude/skills/gamedesign-usage/SKILL.md   ← 쓰는 법
 cmd/stage/           ← 명령 갈래 · 옵션 · 종료 코드만
 internal/
@@ -94,6 +101,7 @@ internal/
   hookio/   훅 stdin JSON 읽기 · systemMessage 만들기 · 고침 적용 결과
   dash/     HTML 한 장 굽기
   paths/    뿌리 · 상대 경로 · 검사에서 뺄 자리
+  gitchanged/ git 을 불러 변경 파일 모으기 (`lint --changed`)
   render/   터미널 글 폭 맞추기 (한글 두 칸)
 templates/dash.html  ← embed 로 실행 파일 안에 들어간다
 testdata/            ← 예시 저장소 둘(repo-ok · repo-bad) + 훅 JSON 셋
@@ -107,12 +115,15 @@ Docs/
 ## 빌드
 
 ```powershell
-$env:CGO_ENABLED="0"
-go build -o bin/stage.exe ./cmd/stage
+.\build.ps1          # bin\stage.exe 를 만든다
+.\build.ps1 -Test    # go vet · go test 까지 돌리고 만든다
 ```
 
 GamedesignTool 폴더 안에서 친다. 스튜디오(Officina) 저장소에서라면 `cd GamedesignTool` 을 먼저 한다.
-**`bin/` 은 git 에 안 올라간다** — 받은 직후에 한 번 친다. 안 치면 훅이 조용히 아무것도 안 막는다.
+**받은 직후와 서브모듈을 갱신한 뒤마다 친다.** `bin/` 은 git 에 안 올라가서 **옛 판이 그대로 남는다** —
+고친 검사가 안 도는데 종료 0 이 나오는 것이 가장 위험하다. `.\bin\stage.exe --version` 이
+`stage 0.1.0 (커밋 · 빌드시각)` 을 찍는다 (안 박혔으면 `(dev)`). 그 커밋이 지금 소스와 같은지 본다.
+커밋 뒤의 `-dirty` 는 **빌드할 때 소스에 커밋 안 한 변경이 있었다**는 뜻이다 — 그 커밋만 믿으면 안 된다.
 
 ### `Docs/Guide/기획절차.md`
 

@@ -208,7 +208,12 @@ func cmdBack(args []string) error {
 	if err := saveState(dir, st, now); err != nil {
 		return err
 	}
-	fmt.Printf("%d단계 → %d단계 「%s」 로 되돌아갑니다. %d판 시작 (%s).\n", was, st.Stage, cfg.StageName(st.Stage), st.Round, st.RoundStart)
+	round := fmt.Sprintf("%d판 시작 (%s)", st.Round, st.RoundStart)
+	// 고리 뒤로 간 것만 「그대로」다. 값 비교로 가르면 같은 날 되돌아간 새 판도 「그대로」로 보인다.
+	if to > cfg.LoopTo {
+		round = fmt.Sprintf("%d판 그대로 (%s 부터)", st.Round, st.RoundStart)
+	}
+	fmt.Printf("%d단계 → %d단계 「%s」 로 되돌아갑니다. %s.\n", was, st.Stage, cfg.StageName(st.Stage), round)
 	fmt.Printf("까닭 : %s\n", *why)
 	if st.Doubt(cfg) {
 		fmt.Printf("%d판째입니다 — 이번에도 통과 못 하면 컨셉이나 기둥을 의심할 때입니다.\n", st.Round)

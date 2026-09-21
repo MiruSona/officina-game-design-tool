@@ -2,6 +2,7 @@
 package state
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -96,6 +97,8 @@ func Load(root string) (*State, error) {
 	if err != nil {
 		return nil, fmt.Errorf("상태 파일을 못 읽었습니다 (%s) : %v", RelPath, err)
 	}
+	// PowerShell 의 `Set-Content -Encoding utf8` 이 BOM 을 붙인다. 사람이 손으로 고친 파일이 깨져 보이면 안 된다.
+	raw = bytes.TrimPrefix(raw, []byte{0xEF, 0xBB, 0xBF})
 	var st State
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return nil, fmt.Errorf("상태 파일이 깨졌습니다 (%s) : %v", RelPath, err)
@@ -139,7 +142,7 @@ func (s *State) Next(cfg config.Config) error {
 	return nil
 }
 
-// GoBack 은 앞 단계로 되돌아가고 기록을 남긴다. 판 번호는 여기서만 오른다.
+// GoBack 은 앞 단계면 어디로든 되돌아가고 기록을 남긴다. 판 번호는 여기서만 오른다.
 func (s *State) GoBack(to int, why string, cfg config.Config, now time.Time) error {
 	if strings.TrimSpace(why) == "" {
 		return errors.New("되돌아가는 까닭을 --why 로 적어야 합니다")
@@ -150,9 +153,6 @@ func (s *State) GoBack(to int, why string, cfg config.Config, now time.Time) err
 	if to >= s.Stage {
 		return fmt.Errorf("되돌아가는 것은 앞 단계로만 합니다 (지금 %d단계)", s.Stage)
 	}
-	if to > cfg.LoopTo {
-		return fmt.Errorf("되돌아갈 수 있는 자리는 %d~%d단계(고리)나 1~%d단계(컨셉·기둥)입니다", cfg.LoopFrom, cfg.LoopTo, cfg.LoopFrom-1)
-	}
 	s.Backs = append(s.Backs, Back{
 		When:  now.Format(time.RFC3339),
 		From:  s.Stage,
@@ -160,12 +160,16 @@ func (s *State) GoBack(to int, why string, cfg config.Config, now time.Time) err
 		Round: s.Round,
 		Why:   strings.TrimSpace(why),
 	})
+	s.Stage = to
+	// 고리 뒤 단계로 되돌아가는 것은 판을 새로 도는 것이 아니다. 판과 판시작일을 그대로 둔다.
+	if to > cfg.LoopTo {
+		return nil
+	}
 	if cfg.InLoop(to) {
 		s.Round++
 	} else {
 		s.Round = 1
 	}
-	s.Stage = to
 	s.RoundStart = now.Format("2006-01-02")
 	return nil
 }
@@ -297,6 +301,23 @@ func (s *State) Counts() (pass, fail, rest int) {
 		}
 	}
 	return pass, fail, rest
+}
+
+// RoundBase 는 「이번 판 일을 언제부터 세나」다. 보통은 판시작일이다.
+// 고리 뒤(9→8 등)로 되돌아가면 판시작일이 그대로라, 그보다 뒤인 마지막 되돌아간 시각을 기준으로 쓴다.
+func (s *State) RoundBase(loc *time.Location) (time.Time, error) {
+	start, err := time.ParseInLocation("2006-01-02", s.RoundStart, loc)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if len(s.Backs) == 0 {
+		return start, nil
+	}
+	last, parseErr := time.Parse(time.RFC3339, s.Backs[len(s.Backs)-1].When)
+	if parseErr != nil || !last.After(start) {
+		return start, nil
+	}
+	return last, nil
 }
 
 // DaysIn 은 이번 판 며칠째인지 센다. 시작한 날이 1일째다.

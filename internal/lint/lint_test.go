@@ -185,12 +185,93 @@ func TestCodeOrderMessageUsesConfigEntry(t *testing.T) {
 	}
 	found := false
 	for _, f := range fs {
-		if f.Code == "L2" && strings.Contains(f.Msg, "10-구조-<이름>.md") {
+		if f.Code != "L2" {
+			continue
+		}
+		if strings.Contains(f.Msg, "10-구조-<이름>.md") && strings.Contains(f.Msg, "10-구조-*.md") &&
+			strings.Contains(f.Msg, cfg.DesignDir) && strings.Contains(f.Msg, "한 장만 있으면 풀립니다") {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("설정에 적은 항목 이름이 메시지에 없다 : %v", fs)
+		t.Fatalf("설정 항목 이름·찾는 자리·푸는 법이 메시지에 다 없다 : %v", fs)
+	}
+}
+
+// traceOf 는 첫 자취의 돈 것·건너뛴 것을 한 줄로 이어 붙인다.
+func traceOf(t *testing.T, in Input) (string, string) {
+	t.Helper()
+	_, trs := RunTrace(in)
+	if len(trs) != 1 {
+		t.Fatalf("자취 = %d개, 1개여야 한다", len(trs))
+	}
+	return strings.Join(trs[0].Ran, " / "), strings.Join(trs[0].Skipped, " / ")
+}
+
+func TestTraceTellsWhyCodeFileSkipsDocChecks(t *testing.T) {
+	root := t.TempDir()
+	mkdir(t, filepath.Join(root, "Docs", "Design"))
+	cfg := config.Default()
+	cfg.CodeDir = "Src"
+	write(t, filepath.Join(root, "Docs", "Design", "03-시스템-무엇.md"), "# 시스템\n")
+	tgt := Target{Rel: "Src/새것.cs", Content: "class A {}", HasContent: true, Existed: false}
+	ran, skipped := traceOf(t, Input{Root: root, Cfg: cfg, Targets: []Target{tgt}})
+	if !strings.Contains(ran, "L2 코드 순서") {
+		t.Fatalf("새 코드 파일이면 L2 가 돈다 : %s", ran)
+	}
+	if !strings.Contains(skipped, "L3 이름") || !strings.Contains(skipped, "L1 문서 순서") {
+		t.Fatalf("코드 파일은 L1·L3 를 건너뛴 까닭이 있어야 한다 : %s", skipped)
+	}
+}
+
+func TestTraceSaysExistingFileSkipsOrder(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	tgt := Target{Rel: "Docs/Design/00-컨셉.md", Content: "# 컨셉\n", HasContent: true, Existed: true}
+	ran, skipped := traceOf(t, Input{Root: root, Cfg: cfg, Targets: []Target{tgt}})
+	if !strings.Contains(skipped, "이미 있는 파일") {
+		t.Fatalf("있는 파일은 순서 검사를 건너뛴 까닭을 적는다 : %s", skipped)
+	}
+	if !strings.Contains(ran, "L4 기둥 개수") || !strings.Contains(ran, "L3 이름") {
+		t.Fatalf("00-컨셉.md 면 L3·L4 가 돈다 : %s", ran)
+	}
+}
+
+// 기획문서폴더 밖 파일에 「00-컨셉.md 가 아님」이라고 적으면 엉뚱한 까닭이 된다.
+func TestTraceSaysOutsideDesignDir(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	tgt := Target{Rel: "Src/새것.cs", Content: "class A {}", HasContent: true, Existed: true}
+	_, skipped := traceOf(t, Input{Root: root, Cfg: cfg, Targets: []Target{tgt}})
+	if !strings.Contains(skipped, "L4·L5 : 기획문서폴더(Docs/Design) 아래가 아님") {
+		t.Fatalf("L4·L5 는 폴더 밖이라고 갈라 적어야 한다 : %s", skipped)
+	}
+	if !strings.Contains(skipped, "L6 : 기획문서폴더(Docs/Design) 아래가 아님") {
+		t.Fatalf("L6 도 폴더 밖이라고 갈라 적어야 한다 : %s", skipped)
+	}
+	if strings.Contains(skipped, "00-컨셉.md 가 아님") {
+		t.Fatalf("폴더 밖 파일에 파일 이름 까닭을 적으면 안 된다 : %s", skipped)
+	}
+}
+
+// 기획문서폴더 안이면 예전처럼 파일 이름으로 까닭을 적는다.
+func TestTraceSaysWrongDocNameInsideDesignDir(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	tgt := Target{Rel: "Docs/Design/01-코어루프.md", Content: "# 코어루프\n", HasContent: true, Existed: true}
+	_, skipped := traceOf(t, Input{Root: root, Cfg: cfg, Targets: []Target{tgt}})
+	if !strings.Contains(skipped, "00-컨셉.md 가 아님") {
+		t.Fatalf("폴더 안이면 파일 이름 까닭이어야 한다 : %s", skipped)
+	}
+}
+
+func TestTraceMarksExcludedFolder(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	tgt := Target{Rel: "Prototypes/2026-09-13-무엇/index.html", HasContent: true}
+	ran, skipped := traceOf(t, Input{Root: root, Cfg: cfg, Targets: []Target{tgt}})
+	if ran != "" || !strings.Contains(skipped, "검사 밖 자리") {
+		t.Fatalf("프로토타입 폴더는 통째로 건너뛴다 : ran=%s skip=%s", ran, skipped)
 	}
 }
 

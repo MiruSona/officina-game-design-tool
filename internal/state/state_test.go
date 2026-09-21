@@ -1,6 +1,7 @@
 package state
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -51,7 +52,9 @@ func TestBackRules(t *testing.T) {
 		{"컨셉으로 되돌아가면 판이 1 이 된다", 6, 1, "컨셉이 틀렸다", false, 1},
 		{"까닭이 없으면 막는다", 6, 3, "", true, 2},
 		{"앞 단계가 아니면 막는다", 3, 6, "왜", true, 2},
-		{"고리 밖으로는 못 되돌아간다", 9, 8, "왜", true, 2},
+		{"고리 뒤로 되돌아가면 판이 그대로다", 9, 8, "8단계를 안 하고 넘어왔다", false, 2},
+		{"고리 뒤 9→7 도 판이 그대로다", 9, 7, "설계가 틀렸다", false, 2},
+		{"고리 뒤 8→7 도 판이 그대로다", 8, 7, "설계가 틀렸다", false, 2},
 	}
 	for _, c := range cases {
 		st := New(now())
@@ -70,6 +73,28 @@ func TestBackRules(t *testing.T) {
 		if !c.wantErr && len(st.Backs) != 1 {
 			t.Fatalf("%s : 되돌아간 기록이 안 남았다", c.name)
 		}
+	}
+}
+
+// 고리 뒤(7~9)로 되돌아가는 것은 판을 새로 도는 것이 아니다. 판시작일도 그대로여야 한다.
+func TestBackBehindLoopKeepsRoundStart(t *testing.T) {
+	cfg := config.Default()
+	st := New(now())
+	st.Stage = 9
+	st.Round = 2
+	st.RoundStart = "2026-09-01"
+	later := now().AddDate(0, 0, 10)
+	if err := st.GoBack(8, "8단계를 안 하고 넘어왔다", cfg, later); err != nil {
+		t.Fatalf("고리 뒤로 되돌아가기 실패 : %v", err)
+	}
+	if st.Stage != 8 || st.Round != 2 {
+		t.Fatalf("단계 = %d · 판번호 = %d, 8 · 2 여야 한다", st.Stage, st.Round)
+	}
+	if st.RoundStart != "2026-09-01" {
+		t.Fatalf("판시작일 = %s, 그대로여야 한다", st.RoundStart)
+	}
+	if len(st.Backs) != 1 || st.Backs[0].To != 8 {
+		t.Fatalf("되돌아간 기록 = %+v, 한 줄 더해야 한다", st.Backs)
 	}
 }
 
@@ -178,5 +203,71 @@ func TestLoadMissingAndSaveRoundTrip(t *testing.T) {
 	}
 	if got.Stage != 4 || got.Format != Format {
 		t.Fatalf("다시 읽은 값 = %+v", got)
+	}
+}
+
+// PowerShell 5.1 의 `Set-Content -Encoding utf8` 이 붙이는 BOM 때문에 죽으면 안 된다.
+func TestLoadAcceptsBOM(t *testing.T) {
+	dir := t.TempDir()
+	st := New(now())
+	st.Stage = 6
+	if err := Save(dir, st, now()); err != nil {
+		t.Fatalf("쓰기 실패 : %v", err)
+	}
+	raw, err := os.ReadFile(Path(dir))
+	if err != nil {
+		t.Fatalf("읽기 실패 : %v", err)
+	}
+	if err := os.WriteFile(Path(dir), append([]byte("\uFEFF"), raw...), 0o644); err != nil {
+		t.Fatalf("BOM 붙여 쓰기 실패 : %v", err)
+	}
+	got, err := Load(dir)
+	if err != nil {
+		t.Fatalf("BOM 붙은 상태 파일도 읽어야 한다 : %v", err)
+	}
+	if got.Stage != 6 {
+		t.Fatalf("단계 = %d, 6 이어야 한다", got.Stage)
+	}
+}
+
+// 고리 뒤(9→8)로 되돌아가면 판시작일이 그대로라, 되돌아간 시각을 기준으로 봐야 한다.
+func TestRoundBaseUsesLastBackAfterLoop(t *testing.T) {
+	cfg := config.Default()
+	st := New(now())
+	st.Stage = 9
+	base, err := st.RoundBase(time.UTC)
+	if err != nil {
+		t.Fatalf("기준 시각 실패 : %v", err)
+	}
+	if !base.Equal(time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("되돌아간 적이 없으면 판시작일이다 : %v", base)
+	}
+	later := now().AddDate(0, 0, 5)
+	if err := st.GoBack(8, "세로 조각을 다시 본다", cfg, later); err != nil {
+		t.Fatalf("되돌아가기 실패 : %v", err)
+	}
+	if st.RoundStart != "2026-09-07" {
+		t.Fatalf("고리 뒤로 가면 판시작일은 그대로다 : %s", st.RoundStart)
+	}
+	base, err = st.RoundBase(time.UTC)
+	if err != nil {
+		t.Fatalf("기준 시각 실패 : %v", err)
+	}
+	if !base.Equal(later) {
+		t.Fatalf("되돌아간 시각이 기준이어야 한다 : %v (되돌아간 %v)", base, later)
+	}
+}
+
+// 판시작일보다 이른 옛 되돌아간 기록은 기준을 뒤로 당기지 않는다.
+func TestRoundBaseIgnoresOldBack(t *testing.T) {
+	st := New(now())
+	st.RoundStart = "2026-09-20"
+	st.Backs = []Back{{When: "2026-09-07T12:00:00Z", From: 6, To: 4, Round: 1, Why: "옛 기록"}}
+	base, err := st.RoundBase(time.UTC)
+	if err != nil {
+		t.Fatalf("기준 시각 실패 : %v", err)
+	}
+	if !base.Equal(time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("판시작일 자정이어야 한다 : %v", base)
 	}
 }

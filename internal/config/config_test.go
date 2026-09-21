@@ -107,6 +107,18 @@ func TestLoadRejectsBrokenJSON(t *testing.T) {
 	}
 }
 
+// PowerShell 5.1 의 `Set-Content -Encoding utf8` 이 붙이는 BOM 때문에 죽으면 안 된다.
+func TestLoadAcceptsBOM(t *testing.T) {
+	dir := writeConfig(t, "\uFEFF"+`{ "코드폴더": "Assets/Scripts" }`)
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("BOM 붙은 설정도 읽어야 한다 : %v", err)
+	}
+	if cfg.CodeDir != "Assets/Scripts" {
+		t.Fatalf("코드폴더 = %q", cfg.CodeDir)
+	}
+}
+
 func TestStageLookup(t *testing.T) {
 	cfg := Default()
 	if _, ok := cfg.Stage(0); ok {

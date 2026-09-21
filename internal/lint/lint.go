@@ -45,19 +45,37 @@ type Input struct {
 	Targets []Target
 }
 
+// Trace 는 파일 하나에 **어느 검사가 실제로 돌았나**와 건너뛴 까닭이다.
+type Trace struct {
+	Rel     string
+	Ran     []string
+	Skipped []string
+}
+
 // Run 은 검사를 돌려 걸린 것을 돌려준다. 아무것도 안 고친다.
 func Run(in Input) []Finding {
+	findings, _ := RunTrace(in)
+	return findings
+}
+
+// RunTrace 는 걸린 것과 함께 무엇이 돌았나를 돌려준다. `--verbose` 가 이걸 쓴다.
+func RunTrace(in Input) ([]Finding, []Trace) {
 	out := []Finding{}
+	traces := []Trace{}
 	if len(in.Targets) == 0 {
-		return append(out, scanRepo(in)...)
+		traces = append(traces, Trace{Rel: "(파일 없이 저장소 모양만)", Ran: []string{"L3 이름 · L4 기둥 · L5 길이 · L6 Won't · L7 물음 수 · L8 상태"}})
+		return append(out, scanRepo(in)...), traces
 	}
 	for _, t := range in.Targets {
 		if paths.Excluded(t.Rel, in.Cfg.ProtoDir) {
+			traces = append(traces, Trace{Rel: t.Rel, Skipped: []string{"전부 : 프로토타입·bin 같은 검사 밖 자리"}})
 			continue
 		}
-		out = append(out, checkTarget(in, t)...)
+		findings, tr := checkTarget(in, t)
+		out = append(out, findings...)
+		traces = append(traces, tr)
 	}
-	return out
+	return out, traces
 }
 
 // Blocked 는 막는 것이 하나라도 있는지 본다.
@@ -70,32 +88,65 @@ func Blocked(fs []Finding) bool {
 	return false
 }
 
-// checkTarget 은 파일 하나를 검사한다.
-func checkTarget(in Input, t Target) []Finding {
+// checkTarget 은 파일 하나를 검사한다. 돈 것·건너뛴 까닭을 **검사하는 그 자리에서** 같이 적는다.
+func checkTarget(in Input, t Target) ([]Finding, Trace) {
 	out := []Finding{}
+	tr := Trace{Rel: t.Rel}
 	design := in.Cfg.DesignDir
 	inDesign := paths.InDir(t.Rel, design)
 	name := path.Base(t.Rel)
 
-	if inDesign && strings.HasSuffix(name, ".md") && !designName.MatchString(name) {
-		out = append(out, Finding{"L3", fmt.Sprintf("%s : 기획서 이름은 `NN-이름.md` 꼴이어야 합니다 (예 : 00-컨셉.md)", t.Rel), true})
+	if !inDesign || !strings.HasSuffix(name, ".md") {
+		tr.Skipped = append(tr.Skipped, "L3 이름 : "+design+" 바로 아래의 .md 가 아님")
+	} else {
+		tr.Ran = append(tr.Ran, "L3 이름")
+		if !designName.MatchString(name) {
+			out = append(out, Finding{"L3", fmt.Sprintf("%s : 기획서 이름은 `NN-이름.md` 꼴이어야 합니다 (예 : 00-컨셉.md)", t.Rel), true})
+		}
 	}
-	if inDesign && !t.Existed && designName.MatchString(name) {
+	if !inDesign || !designName.MatchString(name) {
+		tr.Skipped = append(tr.Skipped, "L1 문서 순서 : "+design+" 바로 아래의 `NN-이름.md` 가 아님")
+	} else if t.Existed {
+		tr.Skipped = append(tr.Skipped, "L1 문서 순서 : 이미 있는 파일이라 새 파일 검사는 건너뜀")
+	} else {
+		tr.Ran = append(tr.Ran, "L1 문서 순서")
 		out = append(out, orderFindings(in, name)...)
 	}
-	if !t.Existed && in.Cfg.CodeDir != "" && underDir(t.Rel, in.Cfg.CodeDir) {
+	if in.Cfg.CodeDir == "" {
+		tr.Skipped = append(tr.Skipped, "L2 코드 순서 : 설정에 코드폴더가 없음")
+	} else if !underDir(t.Rel, in.Cfg.CodeDir) {
+		tr.Skipped = append(tr.Skipped, "L2 코드 순서 : 코드폴더("+in.Cfg.CodeDir+") 아래가 아님")
+	} else if t.Existed {
+		tr.Skipped = append(tr.Skipped, "L2 코드 순서 : 이미 있는 파일이라 새 파일 검사는 건너뜀")
+	} else {
+		tr.Ran = append(tr.Ran, "L2 코드 순서")
 		out = append(out, codeOrderFindings(in, t.Rel)...)
 	}
 	if !t.HasContent {
-		return out
+		tr.Skipped = append(tr.Skipped, "L4·L5·L6 : 내용을 모르는 파일")
+		return out, tr
 	}
-	if inDesign && name == skeletonName(in.Cfg, 0) {
+	// 기획문서폴더 밖 파일에 「00-컨셉.md 가 아님」이라고 적으면 까닭이 엉뚱해 보인다. 먼저 가른다.
+	outside := "기획문서폴더(" + design + ") 아래가 아님"
+	switch {
+	case !inDesign:
+		tr.Skipped = append(tr.Skipped, "L4·L5 : "+outside)
+	case name == skeletonName(in.Cfg, 0):
+		tr.Ran = append(tr.Ran, "L4 기둥 개수 · L5 컨셉 길이")
 		out = append(out, conceptFindings(in, t.Content)...)
+	default:
+		tr.Skipped = append(tr.Skipped, "L4·L5 : "+skeletonName(in.Cfg, 0)+" 가 아님")
 	}
-	if inDesign && name == skeletonName(in.Cfg, 2) {
+	switch {
+	case !inDesign:
+		tr.Skipped = append(tr.Skipped, "L6 : "+outside)
+	case name == skeletonName(in.Cfg, 2):
+		tr.Ran = append(tr.Ran, "L6 Won't 칸")
 		out = append(out, wontFindings(in, t.Content)...)
+	default:
+		tr.Skipped = append(tr.Skipped, "L6 : "+skeletonName(in.Cfg, 2)+" 가 아님")
 	}
-	return out
+	return out, tr
 }
 
 // scanRepo 는 대상 파일 없이 저장소의 모양만 본다. 순서 검사는 안 한다.
@@ -210,7 +261,8 @@ func codeOrderFindings(in Input, rel string) []Finding {
 	if want == "" {
 		return nil
 	}
-	msg := fmt.Sprintf("%s : 시스템 코드를 새로 쓰기 전에 `%s` 를 먼저 씁니다", rel, strings.ReplaceAll(want, "*", "<이름>"))
+	msg := fmt.Sprintf("%s : 시스템 코드를 새로 쓰기 전에 `%s` 를 먼저 씁니다. 지금 `%s` 에 `%s` 가 하나도 없습니다. 어느 것이든 한 장만 있으면 풀립니다 (예 : 첫 코드가 다루는 시스템)",
+		rel, strings.ReplaceAll(want, "*", "<이름>"), in.Cfg.DesignDir, want)
 	return []Finding{{"L2", msg, true}}
 }
 

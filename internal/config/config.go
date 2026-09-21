@@ -98,6 +98,8 @@ func Load(root string) (Config, error) {
 	if err != nil {
 		return cfg, fmt.Errorf("설정 파일을 못 읽었습니다 (%s) : %v", RelPath, err)
 	}
+	// PowerShell 의 `Set-Content -Encoding utf8` 이 BOM 을 붙인다. 사람이 손으로 고친 파일이 깨져 보이면 안 된다.
+	raw = bytes.TrimPrefix(raw, []byte{0xEF, 0xBB, 0xBF})
 	var f file
 	// 모르는 칸은 오타로 보고 거부한다. 조용히 무시하면 안 먹은 설정을 찾기 어렵다.
 	dec := json.NewDecoder(bytes.NewReader(raw))

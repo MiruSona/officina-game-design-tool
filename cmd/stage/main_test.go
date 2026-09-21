@@ -98,9 +98,48 @@ func TestRoundTodosUsesLocalRoundStart(t *testing.T) {
 		t.Fatalf("시각 바꾸기 실패 : %v", err)
 	}
 	for _, m := range roundTodos(root, cfg, st) {
-		if m == "플레이 기록 한 편" {
+		if m.name == "플레이 기록 한 편" {
 			t.Fatal("오늘 고친 기록이 있는데 없다고 본다 (판시작일을 UTC 로 읽었다)")
 		}
+	}
+}
+
+// 고리 뒤(9→8)로 되돌아가면 판시작일이 그대로라 옛 기록이 「다 했음」으로 읽혔다.
+func TestRoundTodosUsesLastBackAfterLoop(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	now := time.Now()
+	st := state.New(now)
+	st.Stage = 9
+	if _, err := st.AddAsk("a", "물음 하나", []string{"기준"}, now); err != nil {
+		t.Fatalf("물음 더하기 실패 : %v", err)
+	}
+	if _, err := st.Check("a", "pass", "", now); err != nil {
+		t.Fatalf("판정 실패 : %v", err)
+	}
+	// 판시작일 뒤·되돌아가기 전에 쓴 옛 기록. 되돌아간 뒤에는 「없음」으로 봐야 한다.
+	old := time.Date(now.Year(), now.Month(), now.Day(), 1, 0, 0, 0, time.Local)
+	path := filepath.Join(root, filepath.FromSlash(historyDir), "옛기록.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("폴더 만들기 실패 : %v", err)
+	}
+	if err := os.WriteFile(path, []byte("# 옛 기록\n"), 0o644); err != nil {
+		t.Fatalf("기록 쓰기 실패 : %v", err)
+	}
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatalf("시각 바꾸기 실패 : %v", err)
+	}
+	if err := st.GoBack(8, "세로 조각을 다시 본다", cfg, old.Add(time.Hour)); err != nil {
+		t.Fatalf("되돌아가기 실패 : %v", err)
+	}
+	found := false
+	for _, m := range roundTodos(root, cfg, st) {
+		if m.name == "플레이 기록 한 편" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("되돌아간 뒤에는 그 전 기록을 「다 했음」으로 보면 안 된다")
 	}
 }
 

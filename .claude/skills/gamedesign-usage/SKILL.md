@@ -16,7 +16,8 @@ description: Use when checking or moving the current design stage, recording a p
 | GamedesignTool 저장소 단독에서 | `.\bin\stage.exe …` |
 
 아래 표는 짧은 쪽(`stage …`)으로 적는다. 실제로 칠 때는 위 앞자리를 붙인다.
-**`bin/` 은 git 에 안 올라간다** — 받은 직후에 `$env:CGO_ENABLED="0"; go build -o bin/stage.exe ./cmd/stage` 를 한 번 친다.
+**`bin/` 은 git 에 안 올라간다** — GamedesignTool 폴더에서 `.\build.ps1` 을 **받은 직후와 서브모듈을 갱신한 뒤마다** 친다.
+안 치면 옛 실행 파일이 그대로 남아 고친 검사가 안 돈다. `stage --version` 의 커밋으로 가른다.
 
 ## 지금도 지키는 규칙
 
@@ -37,6 +38,9 @@ description: Use when checking or moving the current design stage, recording a p
 | 되돌아갈 때 | `stage back <단계> --why "…"` |
 | 판이 끝났을 때 빠진 것 보기 | `stage done` |
 | 문서·코드를 쓰기 직전 모양 검사 | `stage lint` — 훅이 알아서 부른다 |
+| **훅을 안 타는 판이 끝났을 때** (서브에이전트 · `--bare` 하네스) | `stage lint --changed` — git 변경분을 스스로 모은다. 파일을 골라 넘기려면 `stage lint <파일…>` |
+| **서브에이전트가 커밋까지 해 버렸을 때** | `stage lint --since <ref>` — `<ref>`→HEAD 의 커밋된 변경도 본다 (보기 : `--since HEAD~1`). `--changed` 가 「바뀐 파일이 없습니다」로 떨어지면 이것부터 본다 |
+| 무엇이 검사됐는지 보고 싶을 때 | `stage lint --changed --verbose` — 돈 검사와 건너뛴 까닭을 찍는다 |
 | 지금 상태를 한 장으로 보고 싶을 때 | `stage dash` → 구운 HTML 을 브라우저로 연다 |
 
 - **옵션은 명령 뒤에 둔다** : `stage check wait-time pass --note "5분 넘게 돌았다"`.
@@ -54,6 +58,9 @@ description: Use when checking or moving the current design stage, recording a p
 | 파일 이름 | `Docs/Design/` **바로 아래** | `NN-이름.md` 꼴 (`00-컨셉.md` · `03-시스템-<이름>.md`). 하위 폴더는 검사 밖 |
 | 문서 순서 | 같은 곳 | 앞 번호 문서가 없으면 뒤 번호 문서를 **새로 못 만든다** (이미 있는 문서 고치기는 괜찮다) |
 
+- **기획문서폴더의 하위 폴더는 검사 밖이다.** 그래서 **날짜 이름 설계 문서는 하위 폴더에 둔다**
+  (`Docs/Design/세로조각/2026-09-18-….md`). 바로 아래에 두면 L3 가 막는다.
+
 - 기둥·Won't 검사는 **그 문서를 쓰는 단계가 지난 뒤에만 막는다** (기둥은 3단계부터, Won't 는 8단계부터).
   그 전에는 경고만 한다 — 안 그러면 문서를 시작조차 못 한다.
 - **프로토타입 폴더는 검사에서 뺀다.** 버릴 코드를 막으면 5단계가 답답해진다.
@@ -64,6 +71,6 @@ description: Use when checking or moving the current design stage, recording a p
 | --- | --- | --- |
 | `SessionStart` | `stage show --hook` | 지금 단계를 문맥에 넣는다 (상태 파일이 없어도 안 죽는다) |
 | `PreToolUse` (Write\|Edit) | `stage lint --hook` | 순서·모양을 검사해 어긋나면 **종료 2 로 막는다** |
-| `Stop` | `stage done --hook` | 판 끝 할 일이 빠졌으면 **경고만** 한다 |
+| `Stop` | `stage done --hook` | 판 끝 할 일이 빠졌으면 **경고만** 한다. 같은 세션·같은 내용이면 한 번만 뜬다 |
 
 자세한 몫 나누기와 대시보드 화면 배치는 `README.md`.

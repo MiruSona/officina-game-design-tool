@@ -43,11 +43,6 @@ func Read(r io.Reader) (Event, error) {
 	return ev, nil
 }
 
-// Drain 은 쓰지 않을 stdin 을 끝까지 읽어 버린다.
-func Drain(r io.Reader) {
-	_, _ = io.Copy(io.Discard, r)
-}
-
 // SystemMessage 는 사람에게 보여줄 한 줄짜리 훅 출력을 만든다.
 func SystemMessage(text string) ([]byte, error) {
 	out := map[string]string{"systemMessage": text}

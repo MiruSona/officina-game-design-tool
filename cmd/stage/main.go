@@ -17,6 +17,12 @@ import (
 // Version 은 이 툴의 판이다.
 const Version = "0.1.0"
 
+// 빌드할 때 ldflags 로 박는다. 안 박히면 (dev) 로 찍는다.
+var (
+	buildCommit string
+	buildTime   string
+)
+
 // 종료 코드.
 const (
 	exitOK      = 0
@@ -81,7 +87,7 @@ func run(args []string) int {
 	case "dash":
 		err = cmdDash(rest)
 	case "version", "--version", "-v":
-		fmt.Println("stage " + Version)
+		fmt.Println("stage " + Version + " " + buildInfo())
 		return exitOK
 	case "help", "--help", "-h":
 		topic := ""
@@ -108,6 +114,22 @@ func run(args []string) int {
 	}
 	fmt.Fprintln(os.Stderr, err.Error())
 	return exitRead
+}
+
+// buildInfo 는 어느 소스로 빌드한 실행 파일인지 괄호 글로 만든다.
+// bin 이 git 에 안 올라가 옛 판이 남기 쉬우므로 이 값으로 가른다.
+func buildInfo() string {
+	parts := []string{}
+	if buildCommit != "" {
+		parts = append(parts, buildCommit)
+	}
+	if buildTime != "" {
+		parts = append(parts, buildTime)
+	}
+	if len(parts) == 0 {
+		return "(dev)"
+	}
+	return "(" + strings.Join(parts, " · ") + ")"
 }
 
 // newFlags 는 모르는 옵션이 오면 바로 실패하는 플래그 묶음을 만든다.
