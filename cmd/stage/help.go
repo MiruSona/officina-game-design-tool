@@ -72,6 +72,7 @@ var topics = map[string]string{
 	"lint": `stage lint [<파일…>] [--changed] [--since <ref>] [--verbose] [--hook]
 
 셀 수 있는 것만 검사한다. 파일을 주면 「이제 그 파일을 쓴다」고 치고 순서와 모양을 본다.
+새 파일인가는 git 으로 가른다 (HEAD 에 없으면 새 파일). git 밖이면 경고 뒤 모두 새 파일로 본다.
 아무것도 안 주면 저장소의 모양만 본다. --hook 은 stdin 으로 훅 JSON 을 받는다.
 막을 것이 있으면 종료 2 와 함께 까닭을 stderr 에 낸다. 프로토타입 폴더는 검사에서 뺀다.
   --changed   git 이 본 변경분(작업 트리 + 스테이지)을 스스로 모아 검사한다.

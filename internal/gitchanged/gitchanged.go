@@ -49,6 +49,31 @@ func LoadSince(root, ref string) ([]Entry, string, error) {
 	return ParseDiff(raw), strings.TrimSpace(string(prefix)), nil
 }
 
+// HeadFiles 는 HEAD 커밋에 든 파일을 **뿌리 기준** 슬래시 경로로 모은다. 여기 없으면 새 파일이다
+// (--changed 의 `??`·`A` 와 같은 잣대). 커밋이 아직 없으면 빈 모음, git 저장소가 아니면 오류다.
+func HeadFiles(root string) (map[string]bool, error) {
+	prefix, err := run(root, "rev-parse", "--show-prefix")
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	if _, err := run(root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil {
+		return out, nil
+	}
+	raw, err := run(root, "ls-tree", "-r", "-z", "--name-only", "--full-name", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	p := strings.TrimSpace(string(prefix))
+	for _, name := range strings.Split(string(raw), "\x00") {
+		if name == "" || !strings.HasPrefix(name, p) {
+			continue
+		}
+		out[strings.TrimPrefix(name, p)] = true
+	}
+	return out, nil
+}
+
 // ParseDiff 는 `diff --name-status -z` 출력을 자른다. 「딱지\x00경로」가 한 짝이다.
 func ParseDiff(raw []byte) []Entry {
 	out := []Entry{}

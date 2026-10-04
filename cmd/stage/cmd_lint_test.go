@@ -144,6 +144,65 @@ func TestLintSinceSeesCommittedCode(t *testing.T) {
 	}
 }
 
+// newCodeRepo 는 코드폴더 설정과 이미 있던 코드 한 장을 커밋한 시험 저장소다. 시스템 문서는 없다.
+func newCodeRepo(t *testing.T) string {
+	t.Helper()
+	root := newGitRepo(t)
+	writeFile(t, filepath.Join(root, "Docs", "Todo", "기획설정.json"), `{"코드폴더": "Src"}`)
+	writeFile(t, filepath.Join(root, "Src", "있던것.cs"), "class Old {}\n")
+	gitDo(t, root, "add", "-A")
+	gitDo(t, root, "commit", "-m", "첫 커밋")
+	return root
+}
+
+// 판이 끝난 뒤 파일을 넘겨도 디스크에 있다는 까닭으로 새 파일 검사를 건너뛰면 안 된다.
+func TestLintFileArgBlocksNewCode(t *testing.T) {
+	root := newCodeRepo(t)
+	newFile := filepath.Join(root, "Src", "새것.cs")
+	writeFile(t, newFile, "class A {}\n")
+	if got := run([]string{"lint", "--root", root, newFile}); got != exitLint {
+		t.Fatalf("git 에 없는 새 코드는 L2 로 막혀 종료 %d 여야 한다 (지금 %d)", exitLint, got)
+	}
+	// 스테이지에 올린 새 파일도 --changed 처럼 새 파일이다.
+	gitDo(t, root, "add", "-A")
+	if got := run([]string{"lint", "--root", root, newFile}); got != exitLint {
+		t.Fatalf("스테이지에 올린 새 코드도 종료 %d 여야 한다 (지금 %d)", exitLint, got)
+	}
+}
+
+func TestLintFileArgSkipsTrackedCode(t *testing.T) {
+	root := newCodeRepo(t)
+	if got := run([]string{"lint", "--root", root, filepath.Join(root, "Src", "있던것.cs")}); got != exitOK {
+		t.Fatalf("HEAD 에 있던 코드는 새 파일 검사를 안 타 종료 0 이어야 한다 (지금 %d)", got)
+	}
+}
+
+// git 밖에서는 새 파일인지 못 가린다. 조용히 건너뛰지 말고 새 파일로 보고 검사한다.
+func TestLintFileArgOutsideGitChecksAsNew(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "Docs", "Todo", "기획설정.json"), `{"코드폴더": "Src"}`)
+	newFile := filepath.Join(root, "Src", "새것.cs")
+	writeFile(t, newFile, "class A {}\n")
+	if got := run([]string{"lint", "--root", root, newFile}); got != exitLint {
+		t.Fatalf("git 밖에서는 새 파일로 보고 막아 종료 %d 여야 한다 (지금 %d)", exitLint, got)
+	}
+}
+
+// 통과 끝 글만 보면 무엇이 돌았나 모른다. --verbose 를 안 줬으면 그 길을 알려준다.
+func TestLintPassMentionsVerbose(t *testing.T) {
+	root := t.TempDir()
+	doc := filepath.Join(root, "Docs", "Design", "00-컨셉.md")
+	writeFile(t, doc, "# 컨셉\n")
+	out := captureOut(t, func() {
+		if got := run([]string{"lint", "--root", root, doc}); got != exitOK {
+			t.Errorf("종료 0 이어야 한다 (지금 %d)", got)
+		}
+	})
+	if !strings.Contains(out, "--verbose") {
+		t.Fatalf("통과 끝 글에 --verbose 안내가 있어야 한다 : %s", out)
+	}
+}
+
 func TestLintSinceBadRefExitsRead(t *testing.T) {
 	root := newGitRepo(t)
 	if got := run([]string{"lint", "--since", "없는ref", "--root", root}); got != exitRead {

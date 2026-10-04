@@ -59,7 +59,7 @@ func cmdLint(args []string) error {
 	if *verbose {
 		printTraces(traces)
 	}
-	return report(findings, len(targets))
+	return report(findings, len(targets), *verbose)
 }
 
 // lintChanged 는 git 변경분을 모아 검사한다. 못 읽으면 **종료 3** 이다 — 0개 통과로 떨어지지 않는다.
@@ -110,7 +110,7 @@ func lintChanged(root string, cfg config.Config, changed bool, since string, ver
 	if verbose {
 		printTraces(traces)
 	}
-	return report(findings, len(targets))
+	return report(findings, len(targets), verbose)
 }
 
 // skipCount 는 git 이 준 것 중 검사에서 뺀 까닭별 개수다.
@@ -390,8 +390,18 @@ func newerThan(path string, start time.Time, dir bool) bool {
 }
 
 // fileTargets 는 명령줄로 받은 파일들을 검사 대상으로 바꾼다.
+// 「새 파일인가」는 디스크가 아니라 git 으로 가른다 — 판이 끝난 뒤면 새 파일도 디스크에 있다.
 func fileTargets(root string, cfg config.Config, args []string) ([]lint.Target, error) {
 	out := []lint.Target{}
+	if len(args) == 0 {
+		return out, nil
+	}
+	head, err := gitchanged.HeadFiles(root)
+	if err != nil {
+		// 못 가리면 막는 쪽으로 기운다. 조용히 건너뛰면 검사가 안 돈 통과가 나온다.
+		fmt.Fprintf(os.Stderr, "⚠ git 으로 새 파일인지 못 가렸습니다 (%v)\n  넘긴 파일을 모두 새 파일로 보고 L1·L2 를 돌립니다.\n", err)
+		head = map[string]bool{}
+	}
 	for _, a := range args {
 		abs := a
 		if !filepath.IsAbs(abs) {
@@ -401,14 +411,14 @@ func fileTargets(root string, cfg config.Config, args []string) ([]lint.Target, 
 		if err != nil {
 			return nil, fail(exitUsage, "%v", err)
 		}
-		content, existed := readIfExists(abs)
-		out = append(out, lint.Target{Rel: rel, Content: content, HasContent: existed, Existed: existed})
+		content, read := readIfExists(abs)
+		out = append(out, lint.Target{Rel: rel, Content: content, HasContent: read, Existed: head[rel]})
 	}
 	return out, nil
 }
 
-// report 는 걸린 것을 찍고 종료 코드를 정한다.
-func report(findings []lint.Finding, targets int) error {
+// report 는 걸린 것을 찍고 종료 코드를 정한다. verbose 가 아니면 통과 끝에 그 길을 알려준다.
+func report(findings []lint.Finding, targets int, verbose bool) error {
 	blockMsgs := []string{}
 	for _, f := range findings {
 		if f.Block {
@@ -425,6 +435,9 @@ func report(findings []lint.Finding, targets int) error {
 		return nil
 	}
 	fmt.Printf("검사를 마쳤습니다 — 파일 %d개, 막을 것은 없습니다.\n", targets)
+	if !verbose {
+		fmt.Println("파일마다 어느 검사가 돌고 무엇을 왜 건너뛰었나는 `--verbose` 를 붙여 봅니다.")
+	}
 	return nil
 }
 

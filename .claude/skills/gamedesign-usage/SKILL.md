@@ -38,7 +38,7 @@ description: Use when checking or moving the current design stage, recording a p
 | 되돌아갈 때 | `stage back <단계> --why "…"` |
 | 판이 끝났을 때 빠진 것 보기 | `stage done` |
 | 문서·코드를 쓰기 직전 모양 검사 | `stage lint` — 훅이 알아서 부른다 |
-| **훅을 안 타는 판이 끝났을 때** (서브에이전트 · `--bare` 하네스) | `stage lint --changed` — git 변경분을 스스로 모은다. 파일을 골라 넘기려면 `stage lint <파일…>` |
+| **훅을 안 타는 판이 끝났을 때** (서브에이전트 · `--bare` 하네스) | `stage lint --changed` — git 변경분을 스스로 모은다. 파일을 골라 넘기려면 `stage lint <파일…>` — 새 파일은 git(HEAD 에 없음)으로 가르고, git 밖이면 경고 뒤 모두 새 파일로 본다 |
 | **서브에이전트가 커밋까지 해 버렸을 때** | `stage lint --since <ref>` — `<ref>`→HEAD 의 커밋된 변경도 본다 (보기 : `--since HEAD~1`). `--changed` 가 「바뀐 파일이 없습니다」로 떨어지면 이것부터 본다 |
 | 무엇이 검사됐는지 보고 싶을 때 | `stage lint --changed --verbose` — 돈 검사와 건너뛴 까닭을 찍는다 |
 | 지금 상태를 한 장으로 보고 싶을 때 | `stage dash` → 구운 HTML 을 브라우저로 연다 |

@@ -163,6 +163,62 @@ func TestLoadSinceOnRealRepo(t *testing.T) {
 	}
 }
 
+// 파일 인자 검사가 「새 파일인가」를 --changed 와 같은 잣대(HEAD 에 있나)로 가른다.
+func TestHeadFilesOnRealRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git 이 없다")
+	}
+	root := t.TempDir()
+	for _, args := range [][]string{
+		{"init"}, {"config", "user.email", "t@t"}, {"config", "user.name", "t"},
+		{"config", "commit.gpgsign", "false"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("git 준비 실패 : %v %s", err, out)
+		}
+	}
+	// 커밋이 하나도 없으면 모두 새 파일이다.
+	got, err := HeadFiles(root)
+	if err != nil || len(got) != 0 {
+		t.Fatalf("커밋 없는 저장소 = %v · %v, 빈 모음이어야 한다", got, err)
+	}
+	sub := filepath.Join(root, "하위 폴더")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("폴더 만들기 실패 : %v", err)
+	}
+	write(t, filepath.Join(root, "밖.md"), "# 밖\n")
+	write(t, filepath.Join(sub, "있던것.md"), "# 있던 것\n")
+	gitDo(t, root, "add", "-A")
+	gitDo(t, root, "commit", "-m", "첫 커밋")
+	write(t, filepath.Join(sub, "새것.md"), "# 새것\n")
+
+	got, err = HeadFiles(root)
+	if err != nil {
+		t.Fatalf("읽기 실패 : %v", err)
+	}
+	if !got["하위 폴더/있던것.md"] || got["하위 폴더/새것.md"] {
+		t.Fatalf("뿌리에서 본 HEAD 파일 = %v", got)
+	}
+	// 하위 폴더를 뿌리로 주면 그 폴더 기준 경로다.
+	got, err = HeadFiles(sub)
+	if err != nil {
+		t.Fatalf("하위 폴더 읽기 실패 : %v", err)
+	}
+	if !got["있던것.md"] || got["밖.md"] || len(got) != 1 {
+		t.Fatalf("하위 폴더에서 본 HEAD 파일 = %v", got)
+	}
+}
+
+func TestHeadFilesFailsOutsideRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git 이 없다")
+	}
+	if _, err := HeadFiles(t.TempDir()); err == nil {
+		t.Fatal("git 저장소가 아니면 오류여야 한다")
+	}
+}
+
 func TestLoadFailsOutsideRepo(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git 이 없다")
