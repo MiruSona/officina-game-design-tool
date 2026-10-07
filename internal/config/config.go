@@ -35,6 +35,7 @@ type Config struct {
 	LoopFrom        int
 	LoopTo          int
 	DoubtRounds     int
+	Conflict        bool // 어긋남 판정을 바깥 판정기에 보내도 되나. 끄면 후보 쌍까지만 본다
 }
 
 // file 은 설정 파일의 모양이다. 적힌 칸만 덮으려고 포인터로 받는다.
@@ -49,6 +50,7 @@ type file struct {
 	CodeDir         *string  `json:"코드폴더"`
 	Loop            []int    `json:"고리단계"`
 	DoubtRounds     *int     `json:"판의심횟수"`
+	Conflict        *bool    `json:"어긋남판정"`
 }
 
 // Default 는 아무것도 안 정했을 때 쓰는 값이다. 단계 이름과 기준은 절차 정본 「큰 흐름」 표 그대로다.
@@ -84,6 +86,7 @@ func Default() Config {
 		LoopFrom:        3,
 		LoopTo:          6,
 		DoubtRounds:     3,
+		Conflict:        true,
 	}
 }
 
@@ -153,6 +156,9 @@ func apply(cfg *Config, f file) {
 	}
 	if f.DoubtRounds != nil {
 		cfg.DoubtRounds = *f.DoubtRounds
+	}
+	if f.Conflict != nil {
+		cfg.Conflict = *f.Conflict
 	}
 }
 

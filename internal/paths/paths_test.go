@@ -41,6 +41,7 @@ func TestExcluded(t *testing.T) {
 		{"Prototypes", true},
 		{"Docs/Todo/대시보드.html", true},
 		{".git/config", true},
+		{".gamedesign/conflict/last.json", true},
 		{"Docs/Design/00-컨셉.md", false},
 		{"PrototypesX/index.html", false},
 	}

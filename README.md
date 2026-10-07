@@ -44,6 +44,7 @@
 | `stage lint --verbose` | 파일마다 **어느 검사가 돌았고 무엇을 왜 건너뛰었나**를 같이 찍는다 |
 | `stage done` | 판 끝 할 일이 빠졌는지 본다 (경고만) |
 | `stage dash` | 아래 ②. 정적 HTML 한 장을 굽는다 |
+| `stage conflict` | 기획 문서끼리 **어긋난 문장 짝**을 찾는다. 낱말이 겹치는 문장 짝을 규칙으로 추리고, PATH 에 `localharness` 가 있으면 「반대인가」를 물어 경고 목록을 찍는다. **막지 않는다**(종료 0) · 훅에 안 건다. 판정기가 없으면 후보 쌍만 찍는다. `--changed` · `--pairs-only` · `--json` · `--limit` · `--out` · `--fresh`. 설계 : `Docs/Design/2026-10-08-stage-conflict설계.md` |
 
 **옵션은 명령 뒤에 둔다** — `stage show --root C:\어디\저장소`.
 종료 코드는 0 잘 됨 · 1 쓰는 법 · **2 검사에 걸림** · 3 읽기 실패 · 4 쓰기 실패 · 5 파일 깨짐이다.
@@ -72,6 +73,13 @@
 
 **프로토타입 폴더는 검사에서 뺀다.** 버릴 코드를 훅이 막으면 아무도 프로토타입을 안 만들게 된다.
 
+**`stage conflict` 는 기획 글을 바깥 판정기로 보낸다.** 보낸 글과 결과는 붙은 저장소의 `.gamedesign/conflict/` 에 남는다
+(보낸 jsonl · `.result.jsonl` · `last.json`, 자동 삭제 없음) — **붙은 저장소 `.gitignore` 에 `.gamedesign/` 을 넣는다.**
+저장소마다 끄려면 `기획설정.json` 에 `"어긋남판정": false`. 비밀 꼴(열쇠·토큰·IP·이메일 …) 문장은 안 보내고 개수만 찍는다.
+판정기가 없거나·설정이 꺼졌거나·판정기 쪽 설정(`llm.toml`)이 없으면 첫 줄이 **「판정 건너뜀 — <까닭> · 후보 쌍 N개」** 이고 종료 0 이다 — 실패가 아니다.
+IP 꼴은 `\d+.\d+.\d+.\d+` 라 **판 번호 `1.2.3.4` 같은 글도 안 보낸다** — 오탐이지만 새는 쪽보다 낫다. <!-- guard:ok 예시 -->
+판정기는 로컬 LLM 서버를 쓰므로 **게임 서버가 떠 있을 때 돌릴지는 돌리는 사람 규칙**(스튜디오 `CLAUDE.md`)을 따른다.
+
 ### ② 대시보드 (`dash`)
 
 정적 HTML **한 장**을 굽는다. 서버가 없다. 더블클릭하면 열린다.
@@ -98,15 +106,16 @@ cmd/stage/           ← 명령 갈래 · 옵션 · 종료 코드만
 internal/
   config/   단계 9칸 기본값 + 설정 파일로 덮기
   state/    상태 파일 읽고 쓰기 · 판 번호와 되돌아간 기록 규칙
-  mdscan/   마크다운에서 표를 세기 (기둥 · Won't · 줄 수)
+  mdscan/   마크다운에서 표를 세기 (기둥 · Won't · 줄 수) · 문장 나누기 (`Sentences`)
   lint/     검사 규칙 L1~L8
+  conflict/ 어긋남 후보 쌍 추리기 · 비밀 꼴 거르기 · 바깥 판정기(`localharness judge`) 부르기
   hookio/   훅 stdin JSON 읽기 · systemMessage 만들기 · 고침 적용 결과
   dash/     HTML 한 장 굽기
   paths/    뿌리 · 상대 경로 · 검사에서 뺄 자리
   gitchanged/ git 을 불러 변경 파일 모으기 (`lint --changed`)
   render/   터미널 글 폭 맞추기 (한글 두 칸)
 templates/dash.html  ← embed 로 실행 파일 안에 들어간다
-testdata/            ← 예시 저장소 둘(repo-ok · repo-bad) + 훅 JSON 셋
+testdata/            ← 예시 저장소 둘(repo-ok · repo-bad) + 훅 JSON 셋 + conflict/repo-pairs (어긋남 시험용 중립 문장)
 Docs/
   Guide/기획절차.md  ← 절차 정본 (아래)
   Design/     ← 설계 문서 (1판 설계 : 2026-09-07-1판설계.md)
@@ -158,6 +167,7 @@ GamedesignTool 폴더 안에서 친다. 스튜디오(Officina) 저장소에서�
 
 **1판이 돌아간다 (2026-09-07).** 명령 아홉 · 검사 L1~L8 · 대시보드 여섯 덩어리.
 설계는 `Docs/Design/2026-09-07-1판설계.md`, 남은 것은 `Docs/Todo/할일.md`.
+**`stage conflict` 가 더해졌다 (2026-10-08).** 구현·시험은 끝났고 실제 기획 문서로 재는 측정(통과선)은 아직이다.
 
 ## 만드는 차례
 

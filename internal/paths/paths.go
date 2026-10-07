@@ -63,6 +63,10 @@ func Excluded(rel, protoDir string) bool {
 	if under(clean, ".git") || under(clean, "bin") || under(clean, "node_modules") {
 		return true
 	}
+	// `stage conflict` 가 남기는 기록 폴더다. 판정에 보낸 글이라 검사 대상이 아니다.
+	if under(clean, ".gamedesign") {
+		return true
+	}
 	if protoDir != "" && under(clean, strings.TrimSuffix(filepath.ToSlash(protoDir), "/")) {
 		return true
 	}

@@ -42,6 +42,7 @@ description: Use when checking or moving the current design stage, recording a p
 | **서브에이전트가 커밋까지 해 버렸을 때** | `stage lint --since <ref>` — `<ref>`→HEAD 의 커밋된 변경도 본다 (보기 : `--since HEAD~1`). `--changed` 가 「바뀐 파일이 없습니다」로 떨어지면 이것부터 본다 |
 | 무엇이 검사됐는지 보고 싶을 때 | `stage lint --changed --verbose` — 돈 검사와 건너뛴 까닭을 찍는다 |
 | 지금 상태를 한 장으로 보고 싶을 때 | `stage dash` → 구운 HTML 을 브라우저로 연다 |
+| **문서끼리 어긋난 문장이 있나 볼 때** (판 끝 · 수치표 고친 뒤) | `stage conflict` (`--changed` 로 바뀐 문서만) — 경고 목록이지 막음이 아니다. PATH 에 `localharness` 가 없으면 후보 쌍만 찍는다. 로컬 LLM 을 부르니 **게임 서버가 떠 있을 때는 돌리는 사람 규칙**(스튜디오 `CLAUDE.md`)을 따른다. 기록은 `.gamedesign/conflict/` (gitignore) |
 
 - **옵션은 명령 뒤에 둔다** : `stage check wait-time pass --note "5분 넘게 돌았다"`.
 - 다른 저장소를 볼 때는 `--root <경로>`.

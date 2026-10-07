@@ -119,6 +119,20 @@ func TestLoadAcceptsBOM(t *testing.T) {
 	}
 }
 
+func TestLoadConflictSwitch(t *testing.T) {
+	if cfg, _ := Load(t.TempDir()); !cfg.Conflict {
+		t.Fatal("어긋남판정은 기본 켜짐이어야 한다")
+	}
+	cfg, err := Load(writeConfig(t, `{ "어긋남판정": false }`))
+	if err != nil || cfg.Conflict {
+		t.Fatalf("어긋남판정 false 가 안 먹었다 : %v %+v", err, cfg)
+	}
+	// 모르는 bool 값을 조용히 참으로 보지 않는다 — JSON 에서 bool 이 아니면 깨진 파일이다.
+	if _, err := Load(writeConfig(t, `{ "어긋남판정": "아니오" }`)); err == nil {
+		t.Fatal("bool 이 아닌 값은 즉시 실패해야 한다")
+	}
+}
+
 func TestStageLookup(t *testing.T) {
 	cfg := Default()
 	if _, ok := cfg.Stage(0); ok {

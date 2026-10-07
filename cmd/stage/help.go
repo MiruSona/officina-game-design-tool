@@ -28,6 +28,7 @@ const general = `stage — 기획 단계 관문과 상태 한 장
                             --changed 로 git 변경분을, --since <ref> 로 커밋된 변경분을 모은다
   done                      판 끝 할 일이 빠졌는지 본다 (경고만)
   dash                      상태를 정적 HTML 한 장으로 굽는다
+  conflict                  문서끼리 어긋난 문장 짝을 찾는다 (경고 목록 · 막지 않는다)
   version | help [<명령>]
 
 공통 옵션 : --root <경로>   저장소 뿌리 (기본 : 지금 폴더)
@@ -92,5 +93,20 @@ var topics = map[string]string{
 
 상태를 정적 HTML 한 장으로 굽는다 (기본 : Docs/Todo/대시보드.html).
 구운 파일은 사진이다 — 정본은 상태 파일이다. gitignore 에 넣어 둔다.
+`,
+	"conflict": `stage conflict [--changed] [--pairs-only] [--json] [--limit N] [--out <jsonl>] [--fresh]
+
+기획 문서 폴더 바로 아래 NN-이름.md 끼리 낱말이 겹치는 문장 짝을 추리고, PATH 에 localharness 가 있으면
+「반대(B)인가」 를 물어 경고 목록을 찍는다. **막지 않는다** — 경고가 있어도 종료 0 이다. 훅에 안 건다.
+판정기가 없거나 설정(기획설정.json "어긋남판정": false)으로 꺼져 있으면 후보 쌍 목록만 찍고 종료 0.
+판정기가 자기 설정(llm.toml) 없이 넘어가도 같다 : 「판정 건너뜀 — llm.toml 이 없습니다 (…) · 후보 쌍 N개」.
+보낸 글과 결과는 .gamedesign/conflict/ 에 남는다 (gitignore 에 넣는다). 비밀 꼴 문장은 안 보내고 개수만 찍는다.
+  --changed     git 이 본 변경 문서 × 나머지 문서 짝만 본다
+  --pairs-only  판정기를 안 부르고 후보 쌍만 (--json 이면 jsonl 줄 그대로 — want 를 채우면 측정 셋)
+  --json        결과를 JSON 한 줄로
+  --limit N     판정할 쌍 상한 (기본 200)
+  --out <경로>  후보 쌍 jsonl 을 이 자리에도 쓴다. 저장소 뿌리 밖은 거절
+  --fresh       판정기의 지난 기록을 안 쓰고 다시 묻는다
+종료 : 0 잘 됨(경고·건너뜀 포함) · 1 쓰는 법 · 3 폴더·git 못 읽음 · 4 기록 못 씀 · 5 설정 깨짐
 `,
 }
