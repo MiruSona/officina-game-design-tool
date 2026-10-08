@@ -11,10 +11,14 @@ import (
 const MaxSentenceRunes = 400
 
 // Sentence 는 문서에서 뗀 주장 한 토막이다. Line 은 원문 줄 번호(1부터), Ctx 는 「어느 절 · 어느 줄 머리」다.
+// Seq 는 같은 줄 안의 순번(1부터)이다 — 한 줄에 표 칸이나 문장이 여럿이면 줄 번호만으로는 자리가 안 갈린다.
+// Head 는 첫 절 제목(`##` 아래) 앞의 머리말 문장이다 — 날짜·정한 사람·상태 같은 메타 줄이 여기 산다.
 type Sentence struct {
 	Line int
+	Seq  int
 	Text string
 	Ctx  string
+	Head bool
 }
 
 var (
@@ -34,7 +38,9 @@ func Sentences(src string) []Sentence {
 	section := ""
 	fence := ""
 	comment := false
+	head := true // 아직 `##` 이하 절 제목을 못 봤다
 	for i := 0; i < len(lines); i++ {
+		from := len(out)
 		ln := lines[i]
 		t := strings.TrimSpace(ln)
 		// 펜스 안이 먼저다 — 코드 안의 `<!--` 를 주석 시작으로 보면 문서 나머지가 통째로 빠진다.
@@ -63,6 +69,9 @@ func Sentences(src string) []Sentence {
 		}
 		if isAnyHeading(ln) {
 			section = headingText(t)
+			if headingLevel(t) >= 2 {
+				head = false
+			}
 			continue
 		}
 		if isTableLine(ln) {
@@ -70,6 +79,7 @@ func Sentences(src string) []Sentence {
 			if tbl != nil {
 				// 머리줄 i · 구분줄 i+1 · 첫 본문 i+2 (0부터) → 사람 줄 번호는 i+3 이다.
 				out = append(out, tableSentences(tbl, i+3, section)...)
+				markHead(out[from:], head)
 				i = next - 1
 				continue
 			}
@@ -77,11 +87,38 @@ func Sentences(src string) []Sentence {
 			for _, c := range cells(ln) {
 				out = append(out, split(clean(c), i+1, sectionCtx(section))...)
 			}
+			markHead(out[from:], head)
 			continue
 		}
 		out = append(out, bodySentences(ln, i+1, sectionCtx(section))...)
+		markHead(out[from:], head)
 	}
-	return out
+	return stampSeq(out)
+}
+
+// markHead 는 머리말에서 나온 문장에 Head 표시를 단다.
+func markHead(ss []Sentence, head bool) {
+	for i := range ss {
+		ss[i].Head = head
+	}
+}
+
+// stampSeq 는 같은 줄에서 나온 문장에 1부터 순번을 매긴다. 문장은 줄 순서로 쌓여 있다.
+func stampSeq(ss []Sentence) []Sentence {
+	seq := 0
+	for i := range ss {
+		if i == 0 || ss[i].Line != ss[i-1].Line {
+			seq = 0
+		}
+		seq++
+		ss[i].Seq = seq
+	}
+	return ss
+}
+
+// headingLevel 은 제목 줄의 `#` 개수다.
+func headingLevel(t string) int {
+	return len(t) - len(strings.TrimLeft(t, "#"))
 }
 
 // tableSentences 는 표 본문 줄의 칸을 문장으로 만든다. 첫 칸은 문장이 아니라 줄 머리(Ctx)다.

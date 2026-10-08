@@ -30,18 +30,32 @@ var stopWords = map[string]bool{
 
 var digitRe = regexp.MustCompile(`[0-9]`)
 
+// ratioRe 는 비율·좌표·시각 꼴(`3/4` · `9:20` · `540×960` · `1.5x2`)이다. `/`·`:` 가 자르는 글자라
+// 먼저 뽑아 한 토막으로 둔다 — 쪼개면 「3·4」 가 되어 힌트가 딴 값을 가리킨다 (실측 10절 부작용).
+var ratioRe = regexp.MustCompile(`\d+(?:\.\d+)?[/:×xX]\d+(?:\.\d+)?`)
+
 // startsWithDigit 은 토막이 숫자로 시작하는지 본다.
 func startsWithDigit(tok string) bool {
 	return tok != "" && tok[0] >= '0' && tok[0] <= '9'
 }
 
-// Tokens 는 문장을 낱말 토막으로 나눈다. 순수 함수다.
+// startsWithScale 은 `×3`·`x1.5` 처럼 배율 표시 뒤에 숫자가 오는 토막인지 본다. 값으로 센다.
+func startsWithScale(tok string) bool {
+	rest := strings.TrimPrefix(strings.TrimPrefix(tok, "×"), "x")
+	return rest != tok && startsWithDigit(rest)
+}
+
+// Tokens 는 문장을 낱말 토막으로 나눈다. 순수 함수다. 비율 꼴은 자르기 전에 먼저 뽑는다.
 func Tokens(text string) Bag {
 	bag := Bag{}
 	seen := map[string]bool{}
+	for _, ratio := range ratioRe.FindAllString(text, -1) {
+		bag.Nums = append(bag.Nums, strings.ToLower(ratio))
+	}
+	text = ratioRe.ReplaceAllString(text, " ")
 	for _, raw := range strings.FieldsFunc(text, isSeparator) {
 		tok := strings.ToLower(raw)
-		if startsWithDigit(tok) {
+		if startsWithDigit(tok) || startsWithScale(tok) {
 			// 「3초로」 처럼 숫자로 시작하는 토막은 조사만 떼고 숫자 쪽에 둔다. 내용어로 안 센다.
 			bag.Nums = append(bag.Nums, stripParticle(tok))
 			continue

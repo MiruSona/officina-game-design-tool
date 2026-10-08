@@ -18,8 +18,9 @@ import (
 // fakeJudgeEnv 가 켜져 있으면 이 시험 실행 파일이 가짜 localharness 로 돈다.
 // 실제 판정기·서버는 시험에서 절대 안 부른다.
 const (
-	fakeJudgeEnv     = "STAGE_FAKE_JUDGE"
-	fakeJudgeMarkEnv = "STAGE_FAKE_JUDGE_MARK"
+	fakeJudgeEnv      = "STAGE_FAKE_JUDGE"
+	fakeJudgeMarkEnv  = "STAGE_FAKE_JUDGE_MARK"
+	fakeJudgeCountEnv = "STAGE_FAKE_JUDGE_COUNT" // 불린 횟수를 이 파일에 한 줄씩 더한다 — 「한 번만 불렸다」 시험용
 )
 
 func TestMain(m *testing.M) {
@@ -30,7 +31,8 @@ func TestMain(m *testing.M) {
 }
 
 // fakeJudgeMain 은 가짜 판정기다. 입력 jsonl 을 읽어 claim 글에 따라 정해진 글자·확률을 찍는다.
-//   - ok   : 「않」 이 들면 B 0.92 · 「7초」 가 들면 B 0.60 · 나머지 A 0.88
+//   - ok   : 「않」 이 들면 B 0.92 · 「7초」 가 들면 B 0.60 · claim 「그대로」+evidence 「3초」 면 D 0.85 (conflict 물음일 때만) · 나머지 A
+//   - oldkind : conflict 를 모르는 옛 하네스 — `--kind conflict` 면 stderr 「--kind 는 …」 + 종료 1, support 면 ok 와 같다 (D 없음)
 //   - fail : 첫 줄만 찍고 JSON 아닌 줄 하나를 더 찍은 뒤 종료 3
 //   - hang : 아무것도 안 찍고 30초 잔다
 //   - skip : 설정이 없을 때처럼 「판정 건너뜀 : …」 한 줄만 찍고 종료 0 (JSON 아님)
@@ -41,9 +43,14 @@ func fakeJudgeMain(mode string, args []string) int {
 	if mark := os.Getenv(fakeJudgeMarkEnv); mark != "" {
 		_ = os.WriteFile(mark, []byte("called\n"), 0o644)
 	}
-	if len(args) < 1 || args[0] != "judge" || !hasArgs(args, "--kind", "support") || !hasFlag(args, "--json") {
+	kind := argValue(args, "--kind")
+	if len(args) < 1 || args[0] != "judge" || (kind != "conflict" && kind != "support") || !hasFlag(args, "--json") {
 		fmt.Fprintln(os.Stderr, "가짜 판정기 : 인자 꼴이 다르다 :", args)
 		return 2
+	}
+	if mode == "oldkind" && kind != "support" {
+		fmt.Fprintf(os.Stderr, "--kind 는 support | claim | item 중 하나입니다 (준 값 %q)\n", kind)
+		return 1
 	}
 	file := argValue(args, "--file")
 	f, err := os.Open(file)
@@ -52,6 +59,15 @@ func fakeJudgeMain(mode string, args []string) int {
 		return 2
 	}
 	defer f.Close()
+	if count := os.Getenv(fakeJudgeCountEnv); count != "" {
+		f, _ := os.OpenFile(count, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		_, _ = f.WriteString("called\n")
+		_ = f.Close()
+	}
+	if mode == "exit1" {
+		fmt.Fprintln(os.Stderr, "서버 주소가 비었다")
+		return 1
+	}
 	if mode == "hang" {
 		time.Sleep(30 * time.Second)
 		return 0
@@ -71,7 +87,7 @@ func fakeJudgeMain(mode string, args []string) int {
 		if err := json.Unmarshal(sc.Bytes(), &row); err != nil {
 			continue
 		}
-		fmt.Println(fakeVerdict(row))
+		fmt.Println(fakeVerdict(row, kind == "conflict"))
 		n++
 		if mode == "fail" {
 			fmt.Println("이건 JSON 이 아닌 줄이다")
@@ -83,18 +99,26 @@ func fakeJudgeMain(mode string, args []string) int {
 	return 0
 }
 
-func fakeVerdict(row conflict.Row) string {
-	letter, b := "A", 0.05
+func fakeVerdict(row conflict.Row, withD bool) string {
+	letter, b, d := "A", 0.05, 0.0
+	// 꼬리 힌트(「[다른 토막 : …]」)는 두 문장의 값을 다 들고 있으니 본문만 본다.
+	claim, _, _ := strings.Cut(row.Claim, " [다른 토막")
 	switch {
-	case strings.Contains(row.Claim, "않"):
+	case strings.Contains(claim, "않"):
 		letter, b = "B", 0.92
-	case strings.Contains(row.Claim, "7초"):
+	case strings.Contains(claim, "7초"):
 		letter, b = "B", 0.60
+	case withD && strings.Contains(claim, "그대로") && strings.Contains(row.Evidence, "3초"):
+		letter, d = "D", 0.85
 	}
-	a := 1 - b - 0.03
+	probs := map[string]float64{"B": b, "C": 0.03}
+	if withD {
+		probs["D"] = d
+	}
+	a := 1 - b - d - 0.03
+	probs["A"] = a
 	raw, _ := json.Marshal(map[string]any{
-		"id": row.ID, "letter": letter, "prob": map[bool]float64{true: b, false: a}[letter == "B"],
-		"probs": map[string]float64{"A": a, "B": b, "C": 0.03}, "ms": 12,
+		"id": row.ID, "letter": letter, "prob": probs[letter], "probs": probs, "ms": 12,
 	})
 	return string(raw)
 }
@@ -210,7 +234,7 @@ func TestConflictPairsOnlyJSONPrintsFourFieldRows(t *testing.T) {
 		ids = append(ids, m["id"].(string))
 	}
 	joined := strings.Join(ids, " ")
-	if !strings.Contains(joined, "00-바탕.md:7|01-자세.md:3") || !strings.Contains(joined, "00-바탕.md:8|01-자세.md:4") {
+	if !strings.Contains(joined, "00-바탕.md:9:1|01-자세.md:5:1") || !strings.Contains(joined, "00-바탕.md:10:1|01-자세.md:6:1") {
 		t.Fatalf("id 꼴·줄 번호가 다르다 : %v", ids)
 	}
 	if strings.Contains(out, "example.invalid") {
@@ -235,7 +259,7 @@ func TestConflictPairsOnlyJSONPrintsFourFieldRows(t *testing.T) {
 func TestConflictSkipsWhenNoJudgeOnPath(t *testing.T) {
 	root := pairsRepo(t)
 	t.Setenv("PATH", "")
-	out, code := runConflict(t, root)
+	out, code := runConflict(t, root, "--judge")
 	if code != exitOK || !strings.Contains(out, "판정 건너뜀") || !strings.Contains(out, "후보 쌍 4개") {
 		t.Fatalf("PATH 가 비면 건너뜀 + 종료 0 이어야 한다 (%d)\n%s", code, out)
 	}
@@ -250,7 +274,7 @@ func TestConflictRefusesShadowJudge(t *testing.T) {
 	second := t.TempDir()
 	copyExecutable(t, second)
 	t.Setenv("PATH", first+string(os.PathListSeparator)+second)
-	out, code := runConflict(t, root)
+	out, code := runConflict(t, root, "--judge")
 	if code != exitOK || !strings.Contains(out, "PATH 에 localharness 가 2개") {
 		t.Fatalf("같은 이름이 둘이면 거절해야 한다 (%d)\n%s", code, out)
 	}
@@ -260,12 +284,12 @@ func TestConflictConfigOffSkipsBeforeLookup(t *testing.T) {
 	root := pairsRepo(t)
 	installFakeJudge(t, "ok")
 	writeFile(t, filepath.Join(root, "Docs", "Todo", "기획설정.json"), `{"어긋남판정": false}`)
-	out, code := runConflict(t, root)
+	out, code := runConflict(t, root, "--judge")
 	if code != exitOK || !strings.Contains(out, "설정으로 꺼짐") {
 		t.Fatalf("설정이 꺼져 있으면 판정기를 안 불러야 한다 (%d)\n%s", code, out)
 	}
 	writeFile(t, filepath.Join(root, "Docs", "Todo", "기획설정.json"), `{"어긋남판정": "예"}`)
-	if _, code := runConflict(t, root); code != exitCorrupt {
+	if _, code := runConflict(t, root, "--judge"); code != exitCorrupt {
 		t.Fatalf("모르는 값은 즉시 실패(종료 %d)여야 한다 (지금 %d)", exitCorrupt, code)
 	}
 }
@@ -273,7 +297,7 @@ func TestConflictConfigOffSkipsBeforeLookup(t *testing.T) {
 func TestConflictFakeJudgeGradesWarnAndAmbiguous(t *testing.T) {
 	root := pairsRepo(t)
 	installFakeJudge(t, "ok")
-	out, code := runConflict(t, root, "--json")
+	out, code := runConflict(t, root, "--judge", "--json")
 	if code != exitOK {
 		t.Fatalf("경고가 있어도 종료 0 이어야 한다 (%d)\n%s", code, out)
 	}
@@ -281,17 +305,24 @@ func TestConflictFakeJudgeGradesWarnAndAmbiguous(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &got); err != nil {
 		t.Fatalf("--json 이 JSON 이 아니다 : %v\n%s", err, out)
 	}
-	if got.Pairs != 4 || got.Judged != 4 || got.Skipped != "" || got.SecretDropped != 1 {
+	if got.Pairs != 4 || got.Judged != 4 || got.Skipped != "" || got.SecretDropped != 1 || got.Kind != "conflict" {
 		t.Fatalf("요약이 다르다 : %+v", got)
 	}
-	if len(got.Warn) != 1 || got.Warn[0].ID != "00-바탕.md:8|01-자세.md:4" || got.Warn[0].Prob != 0.92 {
+	if len(got.Warn) != 1 || got.Warn[0].ID != "00-바탕.md:10:1|01-자세.md:6:1" || got.Warn[0].Prob != 0.92 {
 		t.Fatalf("경고 = %+v", got.Warn)
 	}
 	if !strings.HasPrefix(got.Warn[0].A, "[절 : 규칙 · 줄 머리 : 창문 · 칸 머리 : 설명] ") {
 		t.Fatalf("evidence 앞에 Ctx 가 붙어야 한다 : %q", got.Warn[0].A)
 	}
-	if len(got.Ambiguous) != 1 || got.Ambiguous[0].ID != "00-바탕.md:7|01-자세.md:3" {
+	if len(got.Ambiguous) != 1 || got.Ambiguous[0].ID != "00-바탕.md:9:1|01-자세.md:5:1" {
 		t.Fatalf("애매 = %+v", got.Ambiguous)
+	}
+	if !strings.HasSuffix(got.Ambiguous[0].B, " [다른 토막 : 값 A 3초 ↔ B 7초 · 낱말 A 둔다 ↔ B 늘린다]") {
+		t.Fatalf("claim 꼬리에 다른 토막 힌트가 붙어야 한다 : %q", got.Ambiguous[0].B)
+	}
+	// 정리 필요(D ≥ 0.8)는 세 번째 통이다 — 경고·애매에 안 들고 tidy 에만 든다. prob 은 D 확률이다.
+	if len(got.Tidy) != 1 || got.Tidy[0].ID != "00-바탕.md:9:1|02-수치.md:5:1" || got.Tidy[0].Prob != 0.85 {
+		t.Fatalf("정리 필요 = %+v", got.Tidy)
 	}
 	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(got.Sent))); err != nil {
 		t.Fatalf("보낸 파일이 있어야 한다 : %v", err)
@@ -301,16 +332,80 @@ func TestConflictFakeJudgeGradesWarnAndAmbiguous(t *testing.T) {
 		t.Fatalf("결과 파일이 있어야 한다 : %v", err)
 	}
 	// 사람용 출력도 한 번 본다.
-	text, _ := runConflict(t, root)
-	if !strings.Contains(text, "경고 1 · 애매 1 · 조용 2") || !strings.Contains(text, "B 0.92") {
+	text, _ := runConflict(t, root, "--judge")
+	if !strings.Contains(text, "경고 1 · 애매 1 · 정리 필요 1 · 조용 1") || !strings.Contains(text, "B 0.92") {
 		t.Fatalf("사람용 표가 다르다\n%s", text)
+	}
+	// 구역 순서는 경고 · 애매 · 정리 필요. 정리 줄은 D 확률로 찍힌다.
+	warnAt, ambAt, tidyAt := strings.Index(text, "┌ 경고 (B ≥ 0.8)"), strings.Index(text, "├ 애매 (0.5 ≤ B < 0.8)"), strings.Index(text, "├ 정리 필요 (D ≥ 0.8)")
+	if warnAt < 0 || ambAt < warnAt || tidyAt < ambAt || !strings.Contains(text, "D 0.85") || !strings.Contains(text, "· 판정 conflict)") {
+		t.Fatalf("구역 순서·정리 줄이 다르다\n%s", text)
+	}
+	last := readLastJSON(t, root)
+	if last["kind"] != "conflict" || last["hint_off"] != float64(0) || last["hint_avg_runes"].(float64) <= 0 {
+		t.Fatalf("last.json 에 kind·hint_avg_runes·hint_off 가 있어야 한다 : %v", last)
+	}
+}
+
+// readLastJSON 은 기록 폴더의 last.json 을 읽는다.
+func readLastJSON(t *testing.T, root string) map[string]any {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(root, ".gamedesign", "conflict", "last.json"))
+	if err != nil {
+		t.Fatalf("last.json 이 있어야 한다 : %v", err)
+	}
+	var last map[string]any
+	if err := json.Unmarshal(raw, &last); err != nil {
+		t.Fatalf("last.json 이 JSON 이 아니다 : %v", err)
+	}
+	return last
+}
+
+// 옛 하네스(conflict 를 모름)면 support 로 한 번 되돌아 묻고, 정리 필요 구역 없이 꼬리줄로 알린다.
+func TestConflictOldJudgeFallsBackToSupport(t *testing.T) {
+	root := pairsRepo(t)
+	installFakeJudge(t, "oldkind")
+	out, code := runConflict(t, root, "--judge", "--json")
+	if code != exitOK {
+		t.Fatalf("되돌아간 판도 종료 0 이어야 한다 (%d)\n%s", code, out)
+	}
+	var got conflictJSON
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &got); err != nil {
+		t.Fatalf("JSON 아님 : %v\n%s", err, out)
+	}
+	if got.Kind != "support" || got.Judged != 4 || len(got.Warn) != 1 || len(got.Ambiguous) != 1 || len(got.Tidy) != 0 || got.Skipped != "" {
+		t.Fatalf("support 로 되돌아가 경고 1 · 애매 1 · 정리 0 이어야 한다 : %+v", got)
+	}
+	text, _ := runConflict(t, root, "--judge")
+	if strings.Contains(text, "├ 정리 필요") || !strings.Contains(text, "판정기가 conflict 를 몰라 support 로 물음") || !strings.Contains(text, "· 판정 support)") {
+		t.Fatalf("정리 구역 없이 꼬리줄이 있어야 한다\n%s", text)
+	}
+	if last := readLastJSON(t, root); last["kind"] != "support" {
+		t.Fatalf("last.json kind 는 support 여야 한다 : %v", last["kind"])
+	}
+}
+
+// 다른 까닭의 종료 1 (stderr 에 「--kind 는」 없음) 은 되돌아가지 않는다 — 헛되이 두 번 돌지 않는다.
+func TestConflictExitOneWithoutKindMessageDoesNotFallBack(t *testing.T) {
+	root := pairsRepo(t)
+	installFakeJudge(t, "exit1")
+	mark := filepath.Join(t.TempDir(), "calls")
+	t.Setenv(fakeJudgeCountEnv, mark)
+	out, _ := runConflict(t, root, "--judge", "--json")
+	var got conflictJSON
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &got); err != nil {
+		t.Fatalf("JSON 아님 : %v\n%s", err, out)
+	}
+	raw, _ := os.ReadFile(mark)
+	if got.Kind != "conflict" || strings.Count(string(raw), "called\n") != 1 {
+		t.Fatalf("한 번만 불리고 kind 는 conflict 여야 한다 : kind=%s calls=%q", got.Kind, raw)
 	}
 }
 
 func TestConflictJudgeFailureStillUsesReadLines(t *testing.T) {
 	root := pairsRepo(t)
 	installFakeJudge(t, "fail")
-	out, code := runConflict(t, root, "--json")
+	out, code := runConflict(t, root, "--judge", "--json")
 	if code != exitOK {
 		t.Fatalf("판정기 실패도 종료 0 이어야 한다 (%d)\n%s", code, out)
 	}
@@ -321,7 +416,7 @@ func TestConflictJudgeFailureStillUsesReadLines(t *testing.T) {
 	if got.Judged != 1 || got.Unread != 1 {
 		t.Fatalf("읽힌 1줄은 쓰고 못 읽은 1줄은 세야 한다 : %+v", got)
 	}
-	text, _ := runConflict(t, root)
+	text, _ := runConflict(t, root, "--judge")
 	if !strings.Contains(text, "⚠ 판정기") || !strings.Contains(text, "서버가 끊겼다") {
 		t.Fatalf("판정기 종료 까닭을 찍어야 한다\n%s", text)
 	}
@@ -333,7 +428,7 @@ func TestConflictJudgeTimeoutReportsFailure(t *testing.T) {
 	old := judgeWait
 	judgeWait = func(int) time.Duration { return 500 * time.Millisecond }
 	defer func() { judgeWait = old }()
-	out, code := runConflict(t, root)
+	out, code := runConflict(t, root, "--judge")
 	if code != exitOK || !strings.Contains(out, "판정 실패") || !strings.Contains(out, "안 끝났습니다") {
 		t.Fatalf("제한 시간을 넘기면 판정 실패 + 종료 0 이어야 한다 (%d)\n%s", code, out)
 	}
@@ -364,10 +459,15 @@ func TestConflictChangedOnlyPairsChangedDoc(t *testing.T) {
 	}
 	gitDo(t, root, "add", ".")
 	gitDo(t, root, "commit", "-q", "-m", "처음")
-	out, code := runConflict(t, root, "--changed", "--pairs-only", "--json")
+	// 판정 안 하는 길의 --json 은 jsonl 행뿐이다 — 바뀐 문서가 없으면 stdout 이 비고 안내는 stderr 다.
+	if out, code := runConflict(t, root, "--changed", "--pairs-only", "--json"); code != exitOK || strings.TrimSpace(out) != "" {
+		t.Fatalf("기본 길 --json 은 0쌍이면 stdout 이 비어야 한다 (%d)\n%s", code, out)
+	}
+	// 요약 객체는 --judge 길 전용이다. 바뀐 문서가 없으면 판정기를 부르기 전에 끝난다.
+	out, code := runConflict(t, root, "--changed", "--judge", "--json")
 	var got conflictJSON
 	if code != exitOK || json.Unmarshal([]byte(strings.TrimSpace(out)), &got) != nil {
-		t.Fatalf("깨끗하면 종료 0 + --json 요약 한 줄이어야 한다 (%d)\n%s", code, out)
+		t.Fatalf("--judge 길은 깨끗하면 종료 0 + --json 요약 한 줄이어야 한다 (%d)\n%s", code, out)
 	}
 	if got.Pairs != 0 || !strings.Contains(got.Skipped, "바뀐 문서가 없습니다") {
 		t.Fatalf("요약 = %+v", got)
@@ -387,13 +487,79 @@ func TestConflictChangedOnlyPairsChangedDoc(t *testing.T) {
 	}
 }
 
+// 판정은 접었다 (2026-10-08 저녁) — 판정기가 PATH 에 있어도 기본은 후보 쌍만 찍고 판정기를 안 부른다.
+func TestConflictDefaultPrintsPairsOnlyWithoutJudge(t *testing.T) {
+	root := pairsRepo(t)
+	installFakeJudge(t, "ok")
+	mark := filepath.Join(t.TempDir(), "called")
+	t.Setenv(fakeJudgeMarkEnv, mark)
+	out, code := runConflict(t, root)
+	if code != exitOK || !strings.Contains(out, "어긋남 후보 4쌍 (판정 안 함 · 판정은 --judge)") {
+		t.Fatalf("기본은 후보 쌍만 찍어야 한다 (%d)\n%s", code, out)
+	}
+	if _, err := os.Stat(mark); err == nil {
+		t.Fatal("--judge 없이는 판정기를 부르면 안 된다")
+	}
+	out, _ = runConflict(t, root, "--json")
+	if lines := strings.Split(strings.TrimSpace(out), "\n"); len(lines) != 4 {
+		t.Fatalf("기본 --json 은 후보 jsonl 4줄이어야 한다 (지금 %d)\n%s", len(lines), out)
+	}
+}
+
+// --judge 를 주면 판정 길로 간다 — 판정기가 없으면 「판정 건너뜀」 줄이 나온다.
+func TestConflictJudgeFlagTakesJudgePath(t *testing.T) {
+	root := pairsRepo(t)
+	t.Setenv("PATH", "")
+	out, code := runConflict(t, root, "--judge")
+	if code != exitOK || !strings.Contains(out, "판정 건너뜀") || strings.Contains(out, "판정 안 함") {
+		t.Fatalf("--judge 면 판정 길로 가야 한다 (%d)\n%s", code, out)
+	}
+}
+
+// --pairs-only 와 --judge 를 같이 주면 --judge 가 진다 — 후보만 찍고 stderr 에 한 줄 알린다.
+func TestConflictPairsOnlyBeatsJudge(t *testing.T) {
+	root := pairsRepo(t)
+	installFakeJudge(t, "ok")
+	mark := filepath.Join(t.TempDir(), "called")
+	t.Setenv(fakeJudgeMarkEnv, mark)
+	oldErr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("파이프 실패 : %v", err)
+	}
+	os.Stderr = w
+	out, code := runConflict(t, root, "--pairs-only", "--judge")
+	_ = w.Close()
+	os.Stderr = oldErr
+	errOut, _ := io.ReadAll(r)
+	if code != exitOK || !strings.Contains(out, "판정 안 함") {
+		t.Fatalf("둘 다 주면 후보만 찍어야 한다 (%d)\n%s", code, out)
+	}
+	if !strings.Contains(string(errOut), "같이 줬습니다") {
+		t.Fatalf("stderr 에 알림 한 줄이 있어야 한다 : %q", errOut)
+	}
+	if _, err := os.Stat(mark); err == nil {
+		t.Fatal("둘 다 주면 판정기를 부르면 안 된다")
+	}
+}
+
+// 기본 길(판정 안 함)은 0쌍이어도 --json stdout 이 비어야 한다 — 요약 객체는 --judge 길 전용이다.
+func TestConflictDefaultNoPairsJSONLeavesStdoutEmpty(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "Docs", "Design", "00-하나.md"), "# 하나\n\n대기 시간은 3초로 둔다.\n")
+	out, code := runConflict(t, root, "--json")
+	if code != exitOK || strings.TrimSpace(out) != "" {
+		t.Fatalf("기본 길 0쌍 --json 은 종료 0 + stdout 빈 것이어야 한다 (%d)\n%s", code, out)
+	}
+}
+
 func TestConflictNoPairsNeverCallsJudgeNorWrites(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "Docs", "Design", "00-하나.md"), "# 하나\n\n대기 시간은 3초로 둔다.\n")
 	installFakeJudge(t, "ok")
 	mark := filepath.Join(t.TempDir(), "called")
 	t.Setenv(fakeJudgeMarkEnv, mark)
-	out, code := runConflict(t, root, "--json")
+	out, code := runConflict(t, root, "--judge", "--json")
 	if code != exitOK {
 		t.Fatalf("종료 %d\n%s", code, out)
 	}
@@ -413,7 +579,7 @@ func TestConflictNoPairsNeverCallsJudgeNorWrites(t *testing.T) {
 func TestConflictJudgeSkipLineIsSkipNotFailure(t *testing.T) {
 	root := pairsRepo(t)
 	installFakeJudge(t, "skip")
-	out, code := runConflict(t, root)
+	out, code := runConflict(t, root, "--judge")
 	if code != exitOK || !strings.HasPrefix(out, "판정 건너뜀 — llm.toml 이 없습니다 (어딘가/llm.toml) · 후보 쌍 4개") {
 		t.Fatalf("건너뜀 줄은 「판정 건너뜀 — <까닭>」 머리글이어야 한다 (%d)\n%s", code, out)
 	}
@@ -434,7 +600,7 @@ func TestConflictJudgeSkipLineIsSkipNotFailure(t *testing.T) {
 		}
 	}
 	// --json 도 같은 뜻이다.
-	out, _ = runConflict(t, root, "--json")
+	out, _ = runConflict(t, root, "--judge", "--json")
 	var got conflictJSON
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &got); err != nil || got.Skipped != "llm.toml 이 없습니다 (어딘가/llm.toml)" || got.Judged != 0 {
 		t.Fatalf("--json skipped 가 다르다 : %v %+v", err, got)
@@ -444,7 +610,7 @@ func TestConflictJudgeSkipLineIsSkipNotFailure(t *testing.T) {
 func TestConflictGarbageStdoutIsFailureWithoutResultFile(t *testing.T) {
 	root := pairsRepo(t)
 	installFakeJudge(t, "garbage")
-	out, code := runConflict(t, root)
+	out, code := runConflict(t, root, "--judge")
 	if code != exitOK || !strings.Contains(out, "판정 실패 — 판정기 출력 : 알 수 없는 줄") {
 		t.Fatalf("JSON 도 건너뜀도 아닌 줄은 실패 까닭이다 (%d)\n%s", code, out)
 	}
@@ -464,7 +630,7 @@ func TestConflictGarbageStdoutIsFailureWithoutResultFile(t *testing.T) {
 func TestConflictResultFileHoldsOnlyJSONLines(t *testing.T) {
 	root := pairsRepo(t)
 	installFakeJudge(t, "fail")
-	out, _ := runConflict(t, root, "--json")
+	out, _ := runConflict(t, root, "--judge", "--json")
 	var got conflictJSON
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &got); err != nil {
 		t.Fatalf("JSON 아님 : %v\n%s", err, out)
@@ -483,7 +649,7 @@ func TestConflictResultFileHoldsOnlyJSONLines(t *testing.T) {
 func TestConflictSkippedRunHasNoResultInLast(t *testing.T) {
 	root := pairsRepo(t)
 	t.Setenv("PATH", "")
-	runConflict(t, root)
+	runConflict(t, root, "--judge")
 	last, _ := os.ReadFile(filepath.Join(root, ".gamedesign", "conflict", "last.json"))
 	if !strings.Contains(string(last), `"result": ""`) {
 		t.Fatalf("판정기를 안 돌린 판은 result 가 비어야 한다 : %s", last)
@@ -533,7 +699,7 @@ func TestConflictRefusesExeAndCmdInSameFolder(t *testing.T) {
 	root := pairsRepo(t)
 	dir := installFakeJudge(t, "ok")
 	writeFile(t, filepath.Join(dir, conflict.JudgeName+".cmd"), "@echo off\r\n")
-	out, code := runConflict(t, root)
+	out, code := runConflict(t, root, "--judge")
 	if code != exitOK || !strings.Contains(out, "PATH 에 localharness 가 2개") {
 		t.Fatalf("같은 폴더의 .exe 와 .cmd 도 둘로 세어 거절해야 한다 (%d)\n%s", code, out)
 	}
@@ -542,11 +708,33 @@ func TestConflictRefusesExeAndCmdInSameFolder(t *testing.T) {
 func TestConflictLimitCutsAndSaysSo(t *testing.T) {
 	root := pairsRepo(t)
 	t.Setenv("PATH", "")
-	out, code := runConflict(t, root, "--limit", "1")
+	out, code := runConflict(t, root, "--judge", "--limit", "1")
 	if code != exitOK || !strings.Contains(out, "후보 쌍 1개") {
 		t.Fatalf("--limit 1 이면 쌍 1개여야 한다 (%d)\n%s", code, out)
 	}
 	if _, code := runConflict(t, root, "--limit", "0"); code != exitUsage {
 		t.Fatalf("--limit 0 은 쓰는 법 오류여야 한다 (지금 %d)", code)
+	}
+}
+
+// 한 짝은 한 통에만 든다 : B 와 D 가 둘 다 0.5~0.8 이면 애매 한 곳만 · D ≥ 0.8 은 정리 필요 · 판정 실패(problem)는 셈에서 빠진다 (설계 14-7·14-8).
+func TestGradeOneBucketPerPair(t *testing.T) {
+	ids := []string{"both-mid", "tidy", "warn", "quiet", "problem"}
+	run := &conflictRun{pairs: map[string]conflict.Pair{}, outcome: conflict.Outcome{Verdicts: map[string]conflict.Verdict{
+		"both-mid": {Letter: "B", Probs: map[string]float64{"A": 0.05, "B": 0.5, "C": 0, "D": 0.45}},
+		"tidy":     {Letter: "D", Probs: map[string]float64{"A": 0.1, "B": 0.05, "C": 0.03, "D": 0.82}},
+		"warn":     {Letter: "B", Probs: map[string]float64{"A": 0.1, "B": 0.85, "C": 0, "D": 0.05}},
+		"quiet":    {Letter: "D", Probs: map[string]float64{"A": 0.3, "B": 0.1, "C": 0.1, "D": 0.5}},
+		"problem":  {Problem: "판정기 오류"},
+	}}}
+	for _, id := range ids {
+		run.rows = append(run.rows, conflict.Row{ID: id})
+	}
+	g, judged := grade(run)
+	if judged != 4 || len(g.warn) != 1 || len(g.amb) != 1 || len(g.tidy) != 1 {
+		t.Fatalf("judged %d · 경고 %d · 애매 %d · 정리 %d", judged, len(g.warn), len(g.amb), len(g.tidy))
+	}
+	if g.amb[0].ID != "both-mid" || g.tidy[0].ID != "tidy" || g.tidy[0].Prob != 0.82 || g.warn[0].ID != "warn" {
+		t.Fatalf("통이 다르다 : 경고 %+v · 애매 %+v · 정리 %+v", g.warn, g.amb, g.tidy)
 	}
 }

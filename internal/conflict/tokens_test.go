@@ -2,6 +2,7 @@ package conflict
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -61,5 +62,24 @@ func TestTokensSeparatorsAndNumbers(t *testing.T) {
 	}
 	if !HasNumber("3초") || HasNumber("세 초") {
 		t.Fatal("HasNumber 가 숫자를 못 가린다")
+	}
+}
+
+// 손질 3차 ② — 비율·좌표·시각은 한 토막이고 내용어로 안 샌다. `×3` 배율은 값이다.
+func TestTokensRatioAndScale(t *testing.T) {
+	bag := Tokens("화면은 540×960 이고 비율 3/4 에 시각 9:20 과 1.5/2 를 쓰며 보너스 ×3 과 x1.5 다.")
+	wantNums := []string{"540×960", "3/4", "9:20", "1.5/2", "×3", "x1.5"}
+	if !reflect.DeepEqual(bag.Nums, wantNums) {
+		t.Fatalf("Nums = %v, %v 여야 한다", bag.Nums, wantNums)
+	}
+	for _, w := range bag.Words {
+		if strings.ContainsAny(w, "0123456789") {
+			t.Fatalf("숫자가 든 토막이 내용어로 샜다 : %v", bag.Words)
+		}
+	}
+	// 날짜·절 번호는 비율이 아니다 (`-` 는 안 잡힌다).
+	bag = Tokens("2026-10-08 에 4-1절을 고쳤다.")
+	if !reflect.DeepEqual(bag.Nums, []string{"2026-10-08", "4-1절"}) {
+		t.Fatalf("Nums = %v", bag.Nums)
 	}
 }

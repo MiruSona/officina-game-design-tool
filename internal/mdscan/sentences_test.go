@@ -122,3 +122,22 @@ func TestSentencesCRLF(t *testing.T) {
 		t.Fatalf("CRLF 에서도 줄 번호가 맞아야 한다 : %+v", ss)
 	}
 }
+
+func TestSentencesSeqAndHead(t *testing.T) {
+	src := "# 제목\n\n날짜 2026-10-01 · 정한 사람 사용자 · 상태 임시\n\n## 규칙 절\n\n| 항목 | 값 | 설명 |\n| --- | --- | --- |\n| 대기 | 대기 시간은 3초다. | 창문은 두 번 열린다. |\n\n첫 문장은 여기서 끝난다. 둘째 문장도 같은 줄이다.\n"
+	ss := Sentences(src)
+	meta, ok := find(ss, "정한 사람")
+	if !ok || !meta.Head || meta.Seq != 1 {
+		t.Fatalf("첫 절 앞 문장은 Head 여야 한다 : %+v", meta)
+	}
+	a, _ := find(ss, "대기 시간은 3초다")
+	b, _ := find(ss, "창문은 두 번")
+	if a.Head || a.Line != b.Line || a.Seq != 1 || b.Seq != 2 {
+		t.Fatalf("표 칸은 같은 줄에서 1·2 로 번호가 붙어야 하고 Head 가 아니어야 한다 : %+v %+v", a, b)
+	}
+	c, _ := find(ss, "첫 문장은")
+	d, _ := find(ss, "둘째 문장도")
+	if c.Seq != 1 || d.Seq != 2 || c.Line != d.Line {
+		t.Fatalf("한 줄의 두 문장도 1·2 여야 한다 : %+v %+v", c, d)
+	}
+}
