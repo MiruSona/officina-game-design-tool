@@ -59,6 +59,11 @@ func (v Verdict) ProbB() float64 {
 	return v.probOf("B")
 }
 
+// ProbA 는 「지지(A)」 확률이다. NLI 판정기에서는 같은 규칙을 두 자리에 적은 짝이 여기로 온다.
+func (v Verdict) ProbA() float64 {
+	return v.probOf("A")
+}
+
 // ProbD 는 「정리 필요(D)」 확률이다. support 물음엔 D 가 없어 0 이다.
 func (v Verdict) ProbD() float64 {
 	return v.probOf("D")

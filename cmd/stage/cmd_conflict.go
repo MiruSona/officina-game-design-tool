@@ -27,14 +27,20 @@ const (
 	warnProb      = 0.8
 	ambiguousProb = 0.5
 	tidyProb      = 0.8
-	showRunes     = 120 // 화면에 찍는 문장 길이. 전체는 기록 파일에 있다
-	listRunes     = 60  // 후보 목록에 찍는 문장 길이
+	// tidySupportNLI 는 NLI 판정기의 「정리 필요」 문턱(A 지지 확률)이다. 출처 nli-studio-v10 보정값 nli_sure_support.
+	// 결과에 모델 이름이 남으니, 모델이 바뀌어 문턱이 낡았는지는 기록에서 본다.
+	tidySupportNLI = 0.89
+	showRunes      = 120 // 화면에 찍는 문장 길이. 전체는 기록 파일에 있다
+	listRunes      = 60  // 후보 목록에 찍는 문장 길이
 )
 
 var conflictDocName = regexp.MustCompile(`^\d\d-.+\.md$`)
 
 // judgeWait 는 쌍 수로 제한 시간을 정한다. 시험이 짧은 값으로 바꿔 끼운다.
 var judgeWait = conflict.Wait
+
+// nliWait 는 NLI 판정 서버 전체 기다림이다. 시험이 짧은 값으로 바꿔 끼운다.
+var nliWait = conflict.NLIWait
 
 // conflictRun 은 한 번 돌린 재료와 결과를 모아 둔 것이다. 출력과 기록이 같이 쓴다.
 type conflictRun struct {
@@ -52,6 +58,9 @@ type conflictRun struct {
 	skipped   string
 	kind      string // 판정기에 넘긴 물음 종류. 옛 하네스가 conflict 를 모르면 support 로 되돌아간다
 	kindNote  string // support 로 되돌아갔을 때의 꼬리줄
+	judgeBy   string // 고른 판정기 (localharness · nli). 판정 길이 아니면 빈 글
+	model     string // nli 판정 서버가 health 로 알린 모델 (id · 이름)
+	healthErr string // nli health 가 실패한 자세한 까닭. last.json judge_error 에 남긴다
 	hintRunes int    // 모든 짝의 힌트 글자 수 합 (last.json 의 평균 재료)
 	hintOff   int    // 수치표 꼴이라 힌트를 끈 짝 수
 	outcome   conflict.Outcome
@@ -83,7 +92,9 @@ type conflictJSON struct {
 	Warn          []hit  `json:"warn"`
 	Ambiguous     []hit  `json:"ambiguous"`
 	Tidy          []hit  `json:"tidy"` // 정리 필요 (D ≥ 0.8). support 로 되돌아간 판은 빈 배열
-	Kind          string `json:"kind"` // 판정기에 넘긴 물음 종류 (conflict · support). 판정 안 한 판은 빈 글
+	Kind          string `json:"kind"` // 판정기에 넘긴 물음 종류 (conflict · support · nli). 판정 안 한 판은 빈 글
+	JudgeBy       string `json:"판정기"`  // localharness · nli. 판정 길이 아니면 빈 글
+	Model         string `json:"모델"`   // nli 판정 서버의 모델 (id · 이름). localharness 는 빈 글
 	Sent          string `json:"sent"`
 	SecretDropped int    `json:"secret_dropped"`
 	Excluded      int    `json:"excluded"` // 메타·근거 줄이라 후보에서 뺀 문장 수
@@ -101,8 +112,17 @@ func cmdConflict(args []string) error {
 	limit := fs.Int("limit", conflict.DefaultLimit, "후보·판정 쌍 상한")
 	out := fs.String("out", "", "후보 쌍 jsonl 을 이 자리에도 쓴다 (저장소 뿌리 아래만)")
 	fresh := fs.Bool("fresh", false, "판정기의 지난 기록을 안 쓰고 다시 묻는다 (--judge 와 같이)")
+	judgeByFlag := fs.String("judge-by", "", "이번 판만 판정기를 고른다 (localharness · nli). 설정 「어긋남판정기」 보다 먼저")
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+	if *judgeByFlag != "" {
+		if err := config.CheckJudgeBy(*judgeByFlag); err != nil {
+			return fail(exitUsage, "--judge-by : %v", err)
+		}
+		if !*judge {
+			fmt.Fprintln(os.Stderr, "--judge-by 는 --judge 와 같이 줄 때만 씁니다 — 이번엔 판정을 안 해 무시합니다")
+		}
 	}
 	if *judge && *pairsOnly {
 		// 둘 다 주면 판정 쪽이 진다 — 서버를 부르는 쪽보다 안 부르는 쪽을 고른다.
@@ -134,6 +154,12 @@ func cmdConflict(args []string) error {
 		return err
 	}
 	run := &conflictRun{root: dir, started: time.Now(), pairs: map[string]conflict.Pair{}}
+	if doJudge {
+		run.judgeBy = cfg.JudgeBy
+		if *judgeByFlag != "" {
+			run.judgeBy = *judgeByFlag
+		}
+	}
 	for _, d := range docs {
 		run.docs = append(run.docs, d.Name)
 	}
@@ -146,7 +172,7 @@ func cmdConflict(args []string) error {
 	run.excluded = res.Excluded
 	run.limited = res.Total > len(res.Pairs)
 	run.dropped = droppedKeys(res.Dropped)
-	run.rows = rowsOf(run, res.Pairs)
+	run.rows = rowsOf(run, res.Pairs, run.judgeBy == config.JudgeByNLI)
 	if len(run.rows) == 0 {
 		return printNothing(run, summary, fmt.Sprintf("어긋남 후보 0쌍 — 문서 %d장 · 문장 %d · 짝 조건(내용어 2개 겹침 + 숫자·부정어)에 맞는 것 %d · 비밀 꼴로 뺀 문장 %d · 메타·근거 줄로 뺀 문장 %d",
 			len(docs), res.Sentences, res.Total, len(run.dropped), excludedCount(run)))
@@ -159,16 +185,24 @@ func cmdConflict(args []string) error {
 		return writeLast(run)
 	}
 	exe := ""
-	if !cfg.Conflict {
+	switch {
+	case !cfg.Conflict:
 		run.skipped = "설정으로 꺼짐 (기획설정.json 어긋남판정: false)"
-	} else {
+	case run.judgeBy == config.JudgeByNLI:
+		run.skipped = nliHealth(run, cfg.JudgeURL)
+	default:
 		exe, run.skipped = conflict.Lookup()
 	}
 	if run.skipped != "" {
 		printSkipped(run, *asJSON)
 		return writeLast(run)
 	}
-	runJudge(run, exe, *fresh)
+	if run.judgeBy == config.JudgeByNLI {
+		run.kind = conflict.BackendNLI
+		run.outcome = conflict.RunNLI(cfg.JudgeURL, run.rows, nliWait(len(run.rows)))
+	} else {
+		runJudge(run, exe, *fresh)
+	}
 	if reason := run.outcome.SkipReason(); reason != "" {
 		// 판정기가 설정 없이 넘어간 것 — 실패가 아니라 건너뜀으로 찍는다.
 		run.skipped = reason
@@ -193,6 +227,22 @@ func runJudge(run *conflictRun, exe string, fresh bool) {
 	run.kind = conflict.KindSupport
 	run.kindNote = "판정기가 conflict 를 몰라 support 로 물음 — 정리 필요 구역 없음"
 	run.outcome = conflict.Run(exe, run.root, file, run.kind, wait, fresh)
+}
+
+// nliHealth 는 판정 서버가 살아 있는지 묻고 모델 이름을 채운다. 응답이 없으면 건너뜀 까닭을 돌려준다 — 실패가 아니라 건너뜀이다.
+func nliHealth(run *conflictRun, url string) string {
+	model, name, err := conflict.Health(url)
+	if err != nil {
+		// 머리글은 짧게 두고 자세한 까닭(연결 거부 · HTTP 코드 · ok 아님 · JSON 깨짐)은 stderr 와 last.json 에 남긴다.
+		run.healthErr = "판정 서버 health 실패 : " + err.Error()
+		fmt.Fprintln(os.Stderr, run.healthErr)
+		return "판정 서버 응답 없음"
+	}
+	run.model = model
+	if name != "" {
+		run.model = model + " (" + name + ")"
+	}
+	return ""
 }
 
 // loadDesignDocs 는 기획 문서 폴더 바로 아래 `NN-이름.md` 를 읽는다. 링크·폴더는 건너뛴다.
@@ -329,11 +379,18 @@ func droppedKeys(dropped []conflict.Pair) []string {
 }
 
 // rowsOf 는 짝을 jsonl 줄로 바꾸고 id 로 되찾을 표를 채운다. 힌트 길이·끈 수도 여기서 센다.
-func rowsOf(run *conflictRun, pairs []conflict.Pair) []conflict.Row {
+// nli 면 힌트 없는 줄을 만든다 — 보낸 기록 파일이 실제로 보낸 글과 같아야 한다.
+func rowsOf(run *conflictRun, pairs []conflict.Pair, nli bool) []conflict.Row {
 	rows := []conflict.Row{}
 	for _, p := range pairs {
 		row := conflict.RowOf(p)
 		run.pairs[row.ID] = p
+		if nli {
+			// 힌트를 안 보내는 길이라 힌트 통계(hint_avg_runes · hint_off)도 0 으로 둔다.
+			row = conflict.NLIRowOf(p)
+			rows = append(rows, row)
+			continue
+		}
 		rows = append(rows, row)
 		hint, off := p.HintInfo()
 		run.hintRunes += len([]rune(hint))
@@ -407,6 +464,9 @@ func writeResult(run *conflictRun) error {
 // writeLast 는 이번 판 요약을 last.json 에 남긴다. 비밀 꼴로 뺀 자리는 여기에만 적는다.
 // judgeError 는 last.json 에 남길 판정기 쪽 까닭이다. 건너뜀·판정 안 돌림은 빈 값, 읽힌 판정이 0 이면 실패 까닭 전부.
 func judgeError(run *conflictRun) string {
+	if run.healthErr != "" {
+		return run.healthErr
+	}
 	if run.skipped != "" || run.sent == "" || run.outcome.Verdicts == nil {
 		return ""
 	}
@@ -429,6 +489,8 @@ func writeLast(run *conflictRun) error {
 		"result":         run.result,
 		"skipped":        run.skipped,
 		"kind":           run.kind,
+		"판정기":            run.judgeBy,
+		"모델":             run.model,
 		"hint_avg_runes": hintAvgRunes(run),
 		"hint_off":       run.hintOff,
 		"judge_error":    judgeError(run),
@@ -485,7 +547,7 @@ func printSkipped(run *conflictRun, asJSON bool) {
 // graded 는 판정을 문턱으로 가른 결과다. 한 짝은 한 통에만 든다.
 type graded struct {
 	warn []hit // B ≥ 0.8
-	tidy []hit // D ≥ 0.8 (B 경고가 아닐 때)
+	tidy []hit // D ≥ 0.8 · nli 면 A ≥ 0.89 (B 경고가 아닐 때)
 	amb  []hit // 0.5 ≤ B < 0.8
 }
 
@@ -517,11 +579,15 @@ func printOutcome(run *conflictRun, asJSON bool) {
 		fmt.Printf("├ 정리 필요 (D ≥ %.1f)\n", tidyProb)
 		printHits(g.tidy, "D")
 	}
+	if run.kind == conflict.BackendNLI {
+		fmt.Printf("├ 정리 필요 (A ≥ %.2f · 같은 말 두 자리)\n", tidySupportNLI)
+		printHits(g.tidy, "A")
+	}
 	printFooter(run)
 }
 
-// grade 는 판정을 확률로 가른다 : B 경고 → D 정리 필요 → B 애매 → 조용. judged 는 problem 없이 판정받은 수다.
-// 확실한 D 가 흔들리는 B 보다 사람에게 쓸모가 있어 정리 필요가 애매보다 앞선다 (설계 14-8).
+// grade 는 판정을 확률로 가른다 : B 경고 → 정리 필요 → B 애매 → 조용. judged 는 problem 없이 판정받은 수다.
+// 확실한 정리 필요가 흔들리는 B 보다 사람에게 쓸모가 있어 애매보다 앞선다 (설계 14-8). 정리 필요는 nli 면 A, 아니면 D 로 본다.
 func grade(run *conflictRun) (graded, int) {
 	g := graded{warn: []hit{}, tidy: []hit{}, amb: []hit{}}
 	judged := 0
@@ -533,12 +599,16 @@ func grade(run *conflictRun) (graded, int) {
 		judged++
 		p := run.pairs[r.ID]
 		h := hit{ID: r.ID, ADoc: p.ADoc, ALine: p.A.Line, ACell: p.A.Seq, BDoc: p.BDoc, BLine: p.B.Line, BCell: p.B.Seq,
-			A: p.Evidence(), B: p.Claim(), Prob: v.ProbB()}
+			A: r.Evidence, B: r.Claim, Prob: v.ProbB()}
+		tidy, tidyMin := v.ProbD(), tidyProb
+		if run.kind == conflict.BackendNLI {
+			tidy, tidyMin = v.ProbA(), tidySupportNLI
+		}
 		switch {
 		case h.Prob >= warnProb:
 			g.warn = append(g.warn, h)
-		case v.ProbD() >= tidyProb:
-			h.Prob = v.ProbD()
+		case tidy >= tidyMin:
+			h.Prob = tidy
 			g.tidy = append(g.tidy, h)
 		case h.Prob >= ambiguousProb:
 			g.amb = append(g.amb, h)
@@ -554,6 +624,7 @@ func printJSON(run *conflictRun, g graded, judged int) {
 	out := conflictJSON{
 		Pairs: len(run.rows), Total: run.total, Judged: judged, Unread: run.outcome.Unread,
 		Skipped: run.skipped, Warn: g.warn, Ambiguous: g.amb, Tidy: g.tidy, Kind: run.kind, Sent: run.sent,
+		JudgeBy: run.judgeBy, Model: run.model,
 		SecretDropped: len(run.dropped), Excluded: excludedCount(run), MS: time.Since(run.started).Milliseconds(),
 	}
 	if out.Skipped == "" && len(run.outcome.Verdicts) == 0 {
@@ -601,10 +672,13 @@ func printFooter(run *conflictRun) {
 		run.sent, len(run.dropped), excludedCount(run), kindTail(run))
 }
 
-// kindTail 은 꼬리줄에 붙는 「 · 판정 conflict」 다. 판정을 안 한 판은 빈 글이다.
+// kindTail 은 꼬리줄에 붙는 「 · 판정 conflict」 다. nli 면 모델도 붙인다. 판정을 안 한 판은 빈 글이다.
 func kindTail(run *conflictRun) string {
 	if run.kind == "" {
 		return ""
+	}
+	if run.model != "" {
+		return " · 판정 " + run.kind + " · 모델 " + run.model
 	}
 	return " · 판정 " + run.kind
 }

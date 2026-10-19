@@ -6,12 +6,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 )
 
 // RelPath 는 설정 파일 자리다. 없어도 된다.
 const RelPath = "Docs/Todo/기획설정.json"
+
+// 어긋남 판정기 이름. localharness 는 PATH 의 하네스, nli 는 루프백의 NLI 판정 서버다.
+const (
+	JudgeByLocalharness = "localharness"
+	JudgeByNLI          = "nli"
+	DefaultJudgeURL     = "http://127.0.0.1:8092"
+)
 
 // Stage 는 단계 하나다.
 type Stage struct {
@@ -35,7 +43,9 @@ type Config struct {
 	LoopFrom        int
 	LoopTo          int
 	DoubtRounds     int
-	Conflict        bool // 어긋남 판정을 바깥 판정기에 보내도 되나. 끄면 후보 쌍까지만 본다
+	Conflict        bool   // 어긋남 판정을 바깥 판정기에 보내도 되나. 끄면 후보 쌍까지만 본다
+	JudgeBy         string // 어긋남 판정기 (localharness · nli)
+	JudgeURL        string // nli 판정 서버 주소. http + 루프백만 받는다
 }
 
 // file 은 설정 파일의 모양이다. 적힌 칸만 덮으려고 포인터로 받는다.
@@ -51,6 +61,8 @@ type file struct {
 	Loop            []int    `json:"고리단계"`
 	DoubtRounds     *int     `json:"판의심횟수"`
 	Conflict        *bool    `json:"어긋남판정"`
+	JudgeBy         *string  `json:"어긋남판정기"`
+	JudgeURL        *string  `json:"판정서버"`
 }
 
 // Default 는 아무것도 안 정했을 때 쓰는 값이다. 단계 이름과 기준은 절차 정본 「큰 흐름」 표 그대로다.
@@ -87,6 +99,8 @@ func Default() Config {
 		LoopTo:          6,
 		DoubtRounds:     3,
 		Conflict:        true,
+		JudgeBy:         JudgeByLocalharness,
+		JudgeURL:        DefaultJudgeURL,
 	}
 }
 
@@ -160,6 +174,12 @@ func apply(cfg *Config, f file) {
 	if f.Conflict != nil {
 		cfg.Conflict = *f.Conflict
 	}
+	if f.JudgeBy != nil {
+		cfg.JudgeBy = *f.JudgeBy
+	}
+	if f.JudgeURL != nil {
+		cfg.JudgeURL = *f.JudgeURL
+	}
 }
 
 // check 는 덮은 뒤 값이 말이 되는지 본다. 적힌 배열 길이도 여기서 본다.
@@ -185,7 +205,40 @@ func check(cfg Config, f file) error {
 	if cfg.DoubtRounds < 1 {
 		return errors.New("판의심횟수는 1 이상이어야 합니다")
 	}
-	return nil
+	if err := CheckJudgeBy(cfg.JudgeBy); err != nil {
+		return err
+	}
+	return CheckJudgeURL(cfg.JudgeURL)
+}
+
+// CheckJudgeBy 는 판정기 이름이 아는 값인지 본다. 설정 칸과 `--judge-by` 가 같이 쓴다.
+func CheckJudgeBy(name string) error {
+	if name == JudgeByLocalharness || name == JudgeByNLI {
+		return nil
+	}
+	return fmt.Errorf("어긋남판정기는 %q 또는 %q 여야 합니다 (지금 %q)", JudgeByLocalharness, JudgeByNLI, name)
+}
+
+// CheckJudgeURL 은 판정 서버 주소가 http 이고 호스트가 루프백인지 본다. 기획 글이 이 기계 밖으로 나가지 않게 막는다.
+func CheckJudgeURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("판정서버 주소를 못 읽었습니다 (%q) : %v", raw, err)
+	}
+	if u.Scheme != "http" {
+		return fmt.Errorf("판정서버 주소는 http:// 여야 합니다 (지금 %q)", raw)
+	}
+	if u.User != nil {
+		return errors.New("판정서버 주소에 사용자 정보를 넣지 않습니다")
+	}
+	if u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return fmt.Errorf("판정서버 주소는 http://호스트:포트 까지만 적습니다 (지금 %q)", raw)
+	}
+	switch u.Hostname() {
+	case "127.0.0.1", "localhost", "::1":
+		return nil
+	}
+	return fmt.Errorf("판정서버 주소는 루프백(127.0.0.1 · localhost · ::1)만 받습니다 (지금 %q)", raw)
 }
 
 // checkPairs 는 [최소, 최대] 꼴 칸이 정말 둘인지 본다. 길이가 다르면 덮기가 조용히 안 먹는다.

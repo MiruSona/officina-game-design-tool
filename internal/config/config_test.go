@@ -145,3 +145,42 @@ func TestStageLookup(t *testing.T) {
 		t.Fatalf("5단계 이름 = %q", cfg.StageName(5))
 	}
 }
+
+func TestLoadJudgeByDefaultAndOverride(t *testing.T) {
+	cfg, err := Load(t.TempDir())
+	if err != nil || cfg.JudgeBy != JudgeByLocalharness || cfg.JudgeURL != DefaultJudgeURL {
+		t.Fatalf("기본은 localharness · %s 여야 한다 : %q %q %v", DefaultJudgeURL, cfg.JudgeBy, cfg.JudgeURL, err)
+	}
+	cfg, err = Load(writeConfig(t, `{ "어긋남판정기": "nli", "판정서버": "http://localhost:9000/" }`))
+	if err != nil || cfg.JudgeBy != JudgeByNLI || cfg.JudgeURL != "http://localhost:9000/" {
+		t.Fatalf("설정 nli 가 먹어야 한다 : %q %q %v", cfg.JudgeBy, cfg.JudgeURL, err)
+	}
+	if _, err := Load(writeConfig(t, `{ "어긋남판정기": "llama" }`)); err == nil {
+		t.Fatal("모르는 판정기 이름은 즉시 실패해야 한다")
+	}
+}
+
+func TestCheckJudgeURLLoopbackOnly(t *testing.T) {
+	for _, ok := range []string{"http://127.0.0.1:8092", "http://localhost:8092", "http://[::1]:8092"} {
+		if err := CheckJudgeURL(ok); err != nil {
+			t.Fatalf("%s 는 받아야 한다 : %v", ok, err)
+		}
+	}
+	bad := []string{
+		"https://127.0.0.1:8092",                                                                // http 아님
+		"http://203.0.113.10:8092",                                                              // 비루프백 guard:ok 문서용 주소(TEST-NET-3)
+		"http://example.invalid",                                                                // 바깥 이름
+		"http://127.0.0.1.nip.io",                                                               // 루프백처럼 보이는 바깥 이름
+		"http://u:p@127.0.0.1:8092",                                                             // 사용자 정보
+		"127.0.0.1:8092",                                                                        // scheme 없음
+		"http://127.0.0.1:8092/judge", "http://127.0.0.1:8092/?x=1", "http://127.0.0.1:8092/#f", // path · query · fragment
+	}
+	for _, b := range bad {
+		if err := CheckJudgeURL(b); err == nil {
+			t.Fatalf("%s 는 거절해야 한다", b)
+		}
+	}
+	if _, err := Load(writeConfig(t, `{ "판정서버": "http://203.0.113.5:8092" }`)); err == nil { // guard:ok 문서용 주소(TEST-NET-3)
+		t.Fatal("설정의 비루프백 주소는 즉시 실패해야 한다")
+	}
+}

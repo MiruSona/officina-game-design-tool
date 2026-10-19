@@ -60,6 +60,12 @@ func (p Pair) Claim() string {
 	return withCtx(p.B)
 }
 
+// NLIRowOf 는 NLI 판정 서버에 보낼 줄이다. 힌트(`[다른 토막 : …]`)는 LLM 물음용이라 NLI 학습 글에 없던 꼴이어서 안 붙이고,
+// 절 머리(Ctx)는 주어가 되므로 남긴다 (JudgeModel v1.2 적용 설계 1절).
+func NLIRowOf(p Pair) Row {
+	return Row{ID: p.ID(), Evidence: withCtx(p.A), Claim: withCtx(p.B)}
+}
+
 // Hint 는 두 문장 사이 「다른 토막」이다 : 한쪽에만 있는 숫자 토막(날짜·id 꼴은 뺌) · 한쪽에만 있는 내용어 · 한쪽에만 있는 부정어.
 // 셋 다 없으면 빈 글이다. 꼴 : 「다른 토막 : 값 A 96분 ↔ B 192분 · 낱말 A 최소 ↔ B 최대 · 부정어 B 에만」
 func (p Pair) Hint() string {
