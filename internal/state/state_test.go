@@ -2,6 +2,7 @@ package state
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -269,5 +270,25 @@ func TestRoundBaseIgnoresOldBack(t *testing.T) {
 	}
 	if !base.Equal(time.Date(2026, 9, 20, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("판시작일 자정이어야 한다 : %v", base)
+	}
+}
+
+// Save 는 tmp 에 쓰고 rename 한다. 덮어쓰기가 되고 tmp 찌꺼기가 남지 않아야 한다.
+func TestSaveAtomicOverwriteLeavesNoTmp(t *testing.T) {
+	dir := t.TempDir()
+	st := New(now())
+	for _, stage := range []int{2, 5} {
+		st.Stage = stage
+		if err := Save(dir, st, now()); err != nil {
+			t.Fatalf("쓰기 실패 : %v", err)
+		}
+	}
+	got, err := Load(dir)
+	if err != nil || got.Stage != 5 {
+		t.Fatalf("덮어쓴 값 = %+v, %v", got, err)
+	}
+	left, _ := filepath.Glob(filepath.Join(filepath.Dir(Path(dir)), "*.tmp"))
+	if len(left) != 0 {
+		t.Fatalf("tmp 가 남았다 : %v", left)
 	}
 }

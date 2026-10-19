@@ -40,7 +40,7 @@ class ScanTextTest(unittest.TestCase):
         self.assertEqual([], scan("print('안녕하세요')"))
 
     def test_ip_caught(self):
-        self.assertIn("ip", rules_of(scan("서버 = 192.168.0.31")))
+        self.assertIn("ip", rules_of(scan("서버 = 8.8.4.4")))
 
     def test_ip_allowed(self):
         self.assertEqual([], scan("bind 0.0.0.0 / 127.0.0.1 / localhost"))
@@ -61,6 +61,45 @@ class ScanTextTest(unittest.TestCase):
 
     def test_guard_ok_skips_line(self):
         self.assertEqual([], scan(f"key = {FAKE_GH}  # guard:ok"))
+
+    def test_jwt_caught(self):
+        fake_jwt = "eyJ" + "X" * 12 + "." + "Y" * 12 + "." + "Z" * 12
+        self.assertIn("token", rules_of(scan(f"auth = {fake_jwt}")))
+
+    def test_password_colon_form(self):
+        self.assertIn("token", rules_of(scan("password: hunter2hunter2")))
+
+    def test_env_reference_not_caught(self):
+        self.assertEqual([], scan('token = os.environ["GH_TOKEN"]'))
+
+    def test_env_default_value_caught(self):
+        self.assertIn("token", rules_of(scan('k = os.environ.get("KEY", "' + "X" * 12 + '")')))
+
+    def test_private_and_doc_ip_allowed(self):
+        self.assertEqual([], scan("10.0.0.7 192.168.0.31 172.20.1.1 203.0.113.5 버전 1.2.3.4"))
+
+    def test_email_git_ssh_and_image_allowed(self):
+        self.assertEqual([], scan("git@github.com:owner/repo.git icon@2x.png a@b.example"))
+
+    def test_test_path_skipped_but_secret_names_scanned(self):
+        # 시험 경로는 통째로 봐주고, 비밀 파일 이름만은 시험 경로라도 검사한다
+        with tempfile.TemporaryDirectory() as folder:
+            go = os.path.join(folder, "tests", "foo_test.go")
+            fake_env = os.path.join(folder, "tests", "fixtures", "x.env")
+            os.makedirs(os.path.dirname(fake_env))
+            with open(go, "w", encoding="utf-8") as handle:
+                handle.write(f"key = {FAKE_GH}\n")
+            with open(fake_env, "w", encoding="utf-8") as handle:
+                handle.write(f"AWS={FAKE_AWS}\n")
+            self.assertEqual([], public_guard.scan_file(go, [], SCRIPT))
+            self.assertEqual(["token"], rules_of(public_guard.scan_file(fake_env, [], SCRIPT)))
+        for rel in ("tests/.env.local", "test/id_rsa", "testdata/a.pem", "tests/b.key"):
+            self.assertFalse(public_guard.is_test_path(rel), rel)
+
+    def test_private_words_rule(self):
+        hits = public_guard.scan_text("a.md", "여기 nickname 이 있다", [], ["nickname"])
+        self.assertEqual(["private"], rules_of(hits))
+        self.assertEqual("n…(8자)", hits[0][3])
 
     def test_mask_shows_four_chars(self):
         hits = scan(f"key = {FAKE_GH}")
@@ -273,7 +312,7 @@ class HookModeTest(unittest.TestCase):
 
     def test_hook_blocks_edit_new_string(self):
         code, err = self.run_hook(
-            {"tool_name": "Edit", "tool_input": {"file_path": "a.md", "new_string": "ip = 10.0.0.7"}}
+            {"tool_name": "Edit", "tool_input": {"file_path": "a.md", "new_string": "ip = 8.8.4.4"}}
         )
         self.assertEqual(2, code)
         self.assertIn("ip", err)
@@ -284,6 +323,17 @@ class HookModeTest(unittest.TestCase):
         )
         self.assertEqual(2, code)
         self.assertIn("localfile", err)
+
+    def test_hook_skips_test_path_but_not_secret_names(self):
+        code, _ = self.run_hook(
+            {"tool_name": "Write", "tool_input": {"file_path": "tests/a.md", "content": f"key = {FAKE_GH}"}}
+        )
+        self.assertEqual(0, code)
+        code, err = self.run_hook(
+            {"tool_name": "Write", "tool_input": {"file_path": "tests/fixtures/x.env", "content": f"AWS={FAKE_AWS}"}}
+        )
+        self.assertEqual(2, code)
+        self.assertIn("token", err)
 
     def test_hook_passes_clean(self):
         code, err = self.run_hook(

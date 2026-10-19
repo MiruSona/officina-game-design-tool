@@ -7,16 +7,22 @@
 
 | 규칙 | 잡는 것 | 통과시키는 것 |
 | --- | --- | --- |
-| `token` | GitHub·AWS·OpenAI/Anthropic·Slack·Google 키, 개인키 블록, `Bearer …`, `api_key = …` 꼴 | — |
-| `ip` | IPv4 주소 | `0.0.0.0` · `127.0.0.1` · `localhost` |
+| `token` | GitHub·AWS·OpenAI/Anthropic·Slack·Google 키, 개인키 블록, `Bearer …`, JWT(`eyJ….….…`), `api_key = …` 꼴 | 환경 변수 참조·코드 식(`secret.New(` 같은 것) |
+| `ip` | IPv4 주소 | `0.0.0.0` · `127.0.0.1` · 사설 IP(`10.` · `192.168.` · `172.16~31.`) · 문서 IP(`192.0.2.` · `198.51.100.` · `203.0.113.`) |
 | `mac` | MAC 주소 | — |
 | `homepath` | `C:\Users\이름` · `/home/이름` · `/Users/이름` | — |
-| `email` | 이메일 주소 | `@example.com` · `noreply@anthropic.com` · `@users.noreply.github.com` |
+| `email` | 이메일 주소 | `@example.com` · `*.example` · `*.invalid` · `example.org` · `noreply@anthropic.com` · `@users.noreply.github.com` · `git@github.com` · 그림 이름(`icon@2x.png`) |
 | `localfile` | 파일 이름이 `*.local.md` · `.env` · `.env.*` · `*.pem` · `*.key` | — |
 | `word` | `public_guard.words` 에 적은 금칙어 | 목록 파일이 없으면 규칙을 건너뛴다 |
+| `private` | `private.words` 에 적은 개인 식별자 (더 세게 가려 첫 글자만 보인다) | 목록 파일이 없으면 규칙을 건너뛴다 |
+
+`private.words` 는 `~/.claude/private.words` 와, 파일 자리에서 부모로 올라가며 만나는 `.claude/local/private.words` 를 합친다.
 
 `.claude/hooks/` · `.githooks/` 아래 파일, 검사기 자신, 이진 파일, 2MB 넘는 파일은 건너뛴다.
 단 `public_guard.self` 는 훅 폴더 안이어도 검사한다 — 거기 적은 낱말은 그대로 공개되기 때문이다.
+
+**시험 경로**(`testdata/` · `tests/` · `test/` · `test_*` · `*_test.*` · `*.test.*`)도 건너뛴다 — 시험 자료에는 토큰 꼴이 꼭 나온다.
+단 `.env` · `.env.*` · `*.env` · `*.pem` · `*.key` · `id_rsa*` 같은 비밀 파일 이름은 시험 경로 아래라도 잡는다.
 
 ## 설치
 
@@ -28,6 +34,7 @@
 ## 훅 둘
 
 - **git pre-commit** — 커밋할 때 스테이지된 파일을 검사한다 (`--staged`). 걸리면 커밋이 멈춘다.
+  작업 트리가 아니라 **올라가 있는(index) 내용**(`git show :<경로>`)을 본다. 못 읽으면 작업 트리로 떨어진다.
 - **Claude Code PreToolUse** — `settings.snippet.json` 을 저장소 `.claude/settings.json` 에 합치면
   Claude 가 Write·Edit 하기 전에 검사한다 (`--hook`). 걸리면 편집 자체가 막히고 이유가 모델에게 보인다.
 

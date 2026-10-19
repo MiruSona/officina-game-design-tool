@@ -127,8 +127,32 @@ func Save(root string, st *State, now time.Time) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("폴더를 못 만들었습니다 (%s) : %v", filepath.Dir(path), err)
 	}
-	if err := os.WriteFile(path, raw, 0o644); err != nil {
+	// 바로 덮어쓰면 도중에 죽을 때 반쪽 파일이 남아 다음 실행이 "깨졌다" 로 멈춘다. tmp 에 쓰고 rename 한다.
+	if err := writeAtomic(path, raw); err != nil {
 		return fmt.Errorf("상태 파일을 못 썼습니다 (%s) : %v", RelPath, err)
+	}
+	return nil
+}
+
+// writeAtomic 은 cmd/stage/done_seen.go 의 saveSeen 과 같은 꼴이다 (패키지가 달라 베꼈다).
+func writeAtomic(path string, raw []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), "state-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	if _, err := f.Write(raw); err != nil {
+		f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
 	}
 	return nil
 }
