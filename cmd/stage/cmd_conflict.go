@@ -26,12 +26,9 @@ const conflictDir = ".gamedesign/conflict"
 const (
 	warnProb      = 0.8
 	ambiguousProb = 0.5
-	tidyProb      = 0.8
-	// tidySupportNLI 는 NLI 판정기의 「정리 필요」 문턱(A 지지 확률)이다. 출처 nli-studio-v10 보정값 nli_sure_support.
-	// 결과에 모델 이름이 남으니, 모델이 바뀌어 문턱이 낡았는지는 기록에서 본다.
-	tidySupportNLI = 0.89
-	showRunes      = 120 // 화면에 찍는 문장 길이. 전체는 기록 파일에 있다
-	listRunes      = 60  // 후보 목록에 찍는 문장 길이
+	tidyProb      = 0.8 // nli 길은 정리 필요를 안 매긴다 (10-19 실측에서 쓸모 없음)
+	showRunes     = 120 // 화면에 찍는 문장 길이. 전체는 기록 파일에 있다
+	listRunes     = 60  // 후보 목록에 찍는 문장 길이
 )
 
 var conflictDocName = regexp.MustCompile(`^\d\d-.+\.md$`)
@@ -547,7 +544,7 @@ func printSkipped(run *conflictRun, asJSON bool) {
 // graded 는 판정을 문턱으로 가른 결과다. 한 짝은 한 통에만 든다.
 type graded struct {
 	warn []hit // B ≥ 0.8
-	tidy []hit // D ≥ 0.8 · nli 면 A ≥ 0.89 (B 경고가 아닐 때)
+	tidy []hit // D ≥ 0.8 (B 경고가 아닐 때) · nli 길은 정리 필요를 안 매긴다 (10-19 실측에서 쓸모 없음)
 	amb  []hit // 0.5 ≤ B < 0.8
 }
 
@@ -579,15 +576,12 @@ func printOutcome(run *conflictRun, asJSON bool) {
 		fmt.Printf("├ 정리 필요 (D ≥ %.1f)\n", tidyProb)
 		printHits(g.tidy, "D")
 	}
-	if run.kind == conflict.BackendNLI {
-		fmt.Printf("├ 정리 필요 (A ≥ %.2f · 같은 말 두 자리)\n", tidySupportNLI)
-		printHits(g.tidy, "A")
-	}
 	printFooter(run)
 }
 
 // grade 는 판정을 확률로 가른다 : B 경고 → 정리 필요 → B 애매 → 조용. judged 는 problem 없이 판정받은 수다.
-// 확실한 정리 필요가 흔들리는 B 보다 사람에게 쓸모가 있어 애매보다 앞선다 (설계 14-8). 정리 필요는 nli 면 A, 아니면 D 로 본다.
+// 확실한 정리 필요가 흔들리는 B 보다 사람에게 쓸모가 있어 애매보다 앞선다 (설계 14-8).
+// 정리 필요는 D 로 본다. nli 길은 정리 필요를 안 매긴다 (10-19 실측에서 쓸모 없음).
 func grade(run *conflictRun) (graded, int) {
 	g := graded{warn: []hit{}, tidy: []hit{}, amb: []hit{}}
 	judged := 0
@@ -600,14 +594,12 @@ func grade(run *conflictRun) (graded, int) {
 		p := run.pairs[r.ID]
 		h := hit{ID: r.ID, ADoc: p.ADoc, ALine: p.A.Line, ACell: p.A.Seq, BDoc: p.BDoc, BLine: p.B.Line, BCell: p.B.Seq,
 			A: r.Evidence, B: r.Claim, Prob: v.ProbB()}
-		tidy, tidyMin := v.ProbD(), tidyProb
-		if run.kind == conflict.BackendNLI {
-			tidy, tidyMin = v.ProbA(), tidySupportNLI
-		}
+		// nli 길은 정리 필요를 안 매긴다 (10-19 실측에서 A ≥ .89 가 중복을 못 잡았다). 그 짝은 B 로만 간다.
+		tidy := v.ProbD()
 		switch {
 		case h.Prob >= warnProb:
 			g.warn = append(g.warn, h)
-		case tidy >= tidyMin:
+		case run.kind != conflict.BackendNLI && tidy >= tidyProb:
 			h.Prob = tidy
 			g.tidy = append(g.tidy, h)
 		case h.Prob >= ambiguousProb:

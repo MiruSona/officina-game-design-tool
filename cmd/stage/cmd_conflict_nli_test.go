@@ -75,8 +75,8 @@ func decodeConflictJSON(t *testing.T, out string) conflictJSON {
 	return got
 }
 
-// 설계 8절 #5 : NLI 면 정리 필요 = A ≥ .89 · 요청에 힌트 없음 · label_set nli4 · 판정기·모델 칸.
-func TestConflictNLIGradesTidyBySupport(t *testing.T) {
+// 설계 8절 #5 : NLI 길은 정리 필요를 안 매긴다 (10-19 실측) · 요청에 힌트 없음 · label_set nli4 · 판정기·모델 칸.
+func TestConflictNLINoTidy(t *testing.T) {
 	root := pairsRepo(t)
 	fake := newNLIFake(t)
 	setNLIConfig(t, root, fake.srv.URL)
@@ -92,8 +92,12 @@ func TestConflictNLIGradesTidyBySupport(t *testing.T) {
 	if len(got.Warn) != 1 || got.Warn[0].Prob != 0.92 || len(got.Ambiguous) != 1 || got.Ambiguous[0].Prob != 0.6 {
 		t.Fatalf("경고·애매는 B 자 그대로여야 한다 : %+v · %+v", got.Warn, got.Ambiguous)
 	}
-	if len(got.Tidy) != 1 || got.Tidy[0].ID != "00-바탕.md:9:1|02-수치.md:5:1" || got.Tidy[0].Prob != 0.93 {
-		t.Fatalf("정리 필요는 A ≥ .89 여야 한다 : %+v", got.Tidy)
+	// A .93 · B .02 짝도 정리 필요에 안 들고 조용으로 간다. tidy 는 null 이 아닌 빈 배열이다.
+	if got.Tidy == nil || len(got.Tidy) != 0 {
+		t.Fatalf("NLI 길의 정리 필요는 빈 배열이어야 한다 : %+v", got.Tidy)
+	}
+	if !strings.Contains(out, `"tidy":[]`) {
+		t.Fatalf("JSON 의 tidy 는 [] 여야 한다\n%s", out)
 	}
 	if strings.Contains(got.Ambiguous[0].B, "[다른 토막") {
 		t.Fatalf("NLI 길의 claim 에는 힌트가 없다 : %q", got.Ambiguous[0].B)
@@ -121,7 +125,7 @@ func TestConflictNLIGradesTidyBySupport(t *testing.T) {
 		t.Fatalf("last.json 에 판정기·모델이 있어야 한다 : %v", last)
 	}
 	text, _ := runConflict(t, root, "--judge")
-	if !strings.Contains(text, "├ 정리 필요 (A ≥ 0.89 · 같은 말 두 자리)") || !strings.Contains(text, "A 0.93") ||
+	if strings.Contains(text, "├ 정리 필요") || strings.Contains(text, "A 0.93") || !strings.Contains(text, "정리 필요 0 · 조용 2)") ||
 		!strings.Contains(text, "· 판정 nli · 모델 nli-test (시험 모델))") || strings.Contains(text, "(D ≥") {
 		t.Fatalf("사람용 출력이 다르다\n%s", text)
 	}
@@ -222,23 +226,28 @@ func TestConflictNLIRowFailureCountsUnjudged(t *testing.T) {
 	}
 }
 
-// NLI 자 : B 경고가 먼저 · 정리 필요는 A ≥ .89 · R(d)은 적기만 하고 통을 안 바꾼다.
-func TestGradeNLIUsesSupportForTidy(t *testing.T) {
+// NLI 자 : 정리 필요를 안 매긴다 (10-19 실측) · B 경고가 먼저 · 높은 A 도 B 대로 조용/경고/애매로 간다 · R(d)은 통을 안 바꾼다.
+func TestGradeNLINeverTidy(t *testing.T) {
 	run := &conflictRun{kind: conflict.BackendNLI, pairs: map[string]conflict.Pair{}, outcome: conflict.Outcome{Verdicts: map[string]conflict.Verdict{
 		"warn":  {Letter: "B", Probs: map[string]float64{"A": 0.1, "B": 0.85, "C": 0.05}},
-		"tidy":  {Letter: "A", Probs: map[string]float64{"A": 0.9, "B": 0.05, "C": 0.05}},
+		"sure":  {Letter: "A", Probs: map[string]float64{"A": 0.908, "B": 0.03, "C": 0.062}},
 		"below": {Letter: "A", Probs: map[string]float64{"A": 0.88, "B": 0.06, "C": 0.06}},
 		"amb":   {Letter: "B", Probs: map[string]float64{"A": 0.4, "B": 0.55, "C": 0.05}},
 		"r":     {Letter: "R", Probs: map[string]float64{"A": 0.05, "B": 0.05, "C": 0.05, "R": 0.85}},
+		"d":     {Letter: "D", Probs: map[string]float64{"A": 0.05, "B": 0.05, "C": 0.05, "D": 0.85}},
 	}}}
-	for _, id := range []string{"warn", "tidy", "below", "amb", "r"} {
+	for _, id := range []string{"warn", "sure", "below", "amb", "r", "d"} {
 		run.rows = append(run.rows, conflict.Row{ID: id})
 	}
 	g, judged := grade(run)
-	if judged != 5 || len(g.warn) != 1 || len(g.tidy) != 1 || len(g.amb) != 1 {
-		t.Fatalf("judged %d · 경고 %d · 정리 %d · 애매 %d", judged, len(g.warn), len(g.tidy), len(g.amb))
+	if judged != 6 || len(g.warn) != 1 || len(g.amb) != 1 {
+		t.Fatalf("judged %d · 경고 %d · 애매 %d", judged, len(g.warn), len(g.amb))
 	}
-	if g.warn[0].ID != "warn" || g.tidy[0].ID != "tidy" || g.tidy[0].Prob != 0.9 || g.amb[0].ID != "amb" {
-		t.Fatalf("통이 다르다 : %+v · %+v · %+v", g.warn, g.tidy, g.amb)
+	// A .908 · B .03 짝(실측의 진짜 모순 자리)이 tidy 에 안 든다. tidy 는 빈 배열(nil 아님)이다.
+	if g.tidy == nil || len(g.tidy) != 0 {
+		t.Fatalf("NLI 길의 정리 필요는 빈 배열이어야 한다 : %+v", g.tidy)
+	}
+	if g.warn[0].ID != "warn" || g.amb[0].ID != "amb" {
+		t.Fatalf("통이 다르다 : %+v · %+v", g.warn, g.amb)
 	}
 }
