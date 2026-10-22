@@ -88,6 +88,8 @@ func run(args []string) int {
 		err = cmdDash(rest)
 	case "conflict":
 		err = cmdConflict(rest)
+	case "iter":
+		err = cmdIter(rest)
 	case "version", "--version", "-v":
 		fmt.Println("stage " + Version + " " + buildInfo())
 		return exitOK

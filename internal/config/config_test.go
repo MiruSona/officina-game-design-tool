@@ -184,3 +184,31 @@ func TestCheckJudgeURLLoopbackOnly(t *testing.T) {
 		t.Fatal("설정의 비루프백 주소는 즉시 실패해야 한다")
 	}
 }
+
+func TestIterFieldsDefaultAndOverride(t *testing.T) {
+	cfg := Default()
+	if cfg.IterDir != "Docs/History/반복" || cfg.IterTemplate != "" {
+		t.Fatalf("반복 기본값이 다르다 : %q · %q", cfg.IterDir, cfg.IterTemplate)
+	}
+	dir := writeConfig(t, `{ "반복기록폴더": "Docs/반복", "반복틀": "Docs/반복/00-틀.md" }`)
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatalf("설정 읽기 실패 : %v", err)
+	}
+	if cfg.IterDir != "Docs/반복" || cfg.IterTemplate != "Docs/반복/00-틀.md" {
+		t.Fatalf("반복 칸이 안 덮였다 : %q · %q", cfg.IterDir, cfg.IterTemplate)
+	}
+}
+
+func TestCheckInside(t *testing.T) {
+	for _, ok := range []string{"Docs/History/반복", "a/../b", "./x.md"} {
+		if err := CheckInside("반복틀", ok); err != nil {
+			t.Fatalf("%q 는 받아야 한다 : %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"", "..", "../밖", "a/../../밖", "/abs", `C:\abs`, `\server\share`} {
+		if err := CheckInside("반복틀", bad); err == nil {
+			t.Fatalf("%q 는 거절해야 한다", bad)
+		}
+	}
+}

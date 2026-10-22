@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 )
 
 // RelPath 는 설정 파일 자리다. 없어도 된다.
@@ -46,6 +48,8 @@ type Config struct {
 	Conflict        bool   // 어긋남 판정을 바깥 판정기에 보내도 되나. 끄면 후보 쌍까지만 본다
 	JudgeBy         string // 어긋남 판정기 (localharness · nli)
 	JudgeURL        string // nli 판정 서버 주소. http + 루프백만 받는다
+	IterDir         string // 반복 기록 파일을 두는 폴더 (뿌리 기준)
+	IterTemplate    string // 게임 자기 반복 틀 (뿌리 기준). 비면 내장 틀
 }
 
 // file 은 설정 파일의 모양이다. 적힌 칸만 덮으려고 포인터로 받는다.
@@ -63,6 +67,8 @@ type file struct {
 	Conflict        *bool    `json:"어긋남판정"`
 	JudgeBy         *string  `json:"어긋남판정기"`
 	JudgeURL        *string  `json:"판정서버"`
+	IterDir         *string  `json:"반복기록폴더"`
+	IterTemplate    *string  `json:"반복틀"`
 }
 
 // Default 는 아무것도 안 정했을 때 쓰는 값이다. 단계 이름과 기준은 절차 정본 「큰 흐름」 표 그대로다.
@@ -101,6 +107,7 @@ func Default() Config {
 		Conflict:        true,
 		JudgeBy:         JudgeByLocalharness,
 		JudgeURL:        DefaultJudgeURL,
+		IterDir:         "Docs/History/반복",
 	}
 }
 
@@ -180,6 +187,12 @@ func apply(cfg *Config, f file) {
 	if f.JudgeURL != nil {
 		cfg.JudgeURL = *f.JudgeURL
 	}
+	if f.IterDir != nil {
+		cfg.IterDir = *f.IterDir
+	}
+	if f.IterTemplate != nil {
+		cfg.IterTemplate = *f.IterTemplate
+	}
 }
 
 // check 는 덮은 뒤 값이 말이 되는지 본다. 적힌 배열 길이도 여기서 본다.
@@ -239,6 +252,24 @@ func CheckJudgeURL(raw string) error {
 		return nil
 	}
 	return fmt.Errorf("판정서버 주소는 루프백(127.0.0.1 · localhost · ::1)만 받습니다 (지금 %q)", raw)
+}
+
+// CheckInside 는 설정 경로가 뿌리 기준 상대 경로이고 뿌리 밖으로 안 나가는지 글자로만 본다.
+// 설정 읽기에서는 안 막는다 — 반복을 안 쓰는 명령까지 멈추면 안 된다. `stage iter new` 가 부른다.
+// 링크를 푼 실제 경로는 부르는 쪽이 한 번 더 본다.
+func CheckInside(name, rel string) error {
+	slashed := filepath.ToSlash(rel)
+	if strings.TrimSpace(slashed) == "" {
+		return fmt.Errorf("%s 이 비었습니다", name)
+	}
+	if filepath.IsAbs(rel) || filepath.VolumeName(rel) != "" || strings.HasPrefix(slashed, "/") {
+		return fmt.Errorf("%s 은 뿌리 기준 상대 경로여야 합니다 (지금 %q)", name, rel)
+	}
+	clean := path.Clean(slashed)
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return fmt.Errorf("%s 이 뿌리 밖으로 나갑니다 (지금 %q)", name, rel)
+	}
+	return nil
 }
 
 // checkPairs 는 [최소, 최대] 꼴 칸이 정말 둘인지 본다. 길이가 다르면 덮기가 조용히 안 먹는다.

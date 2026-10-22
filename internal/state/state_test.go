@@ -3,6 +3,7 @@ package state
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -290,5 +291,68 @@ func TestSaveAtomicOverwriteLeavesNoTmp(t *testing.T) {
 	left, _ := filepath.Glob(filepath.Join(filepath.Dir(Path(dir)), "*.tmp"))
 	if len(left) != 0 {
 		t.Fatalf("tmp 가 남았다 : %v", left)
+	}
+}
+
+// writeRaw 는 임시 뿌리에 상태 파일 글을 그대로 쓴다.
+func writeRaw(t *testing.T, body string) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(Path(root)), 0o755); err != nil {
+		t.Fatalf("폴더 만들기 실패 : %v", err)
+	}
+	if err := os.WriteFile(Path(root), []byte(body), 0o644); err != nil {
+		t.Fatalf("상태 쓰기 실패 : %v", err)
+	}
+	return root
+}
+
+// S1 : 반복 칸이 없는 옛 파일은 빈 배열로 읽고, 그대로 저장하면 형식 1 이다.
+func TestOldFormatReadsAndStaysFormat1(t *testing.T) {
+	root := writeRaw(t, `{"형식": 1, "단계": 9, "판번호": 1, "판시작일": "2026-09-07", "물음": [], "되돌아간기록": []}`)
+	st, err := Load(root)
+	if err != nil {
+		t.Fatalf("옛 파일 읽기 실패 : %v", err)
+	}
+	if st.Iters == nil || len(st.Iters) != 0 {
+		t.Fatalf("반복은 빈 배열이어야 한다 : %#v", st.Iters)
+	}
+	if err := Save(root, st, now()); err != nil {
+		t.Fatalf("저장 실패 : %v", err)
+	}
+	raw, _ := os.ReadFile(Path(root))
+	if !strings.Contains(string(raw), `"형식": 1`) || strings.Contains(string(raw), "반복") {
+		t.Fatalf("반복이 없으면 형식 1 이고 반복 칸도 없어야 한다 : %s", raw)
+	}
+}
+
+// S2 : 반복을 하나 더해 저장하면 형식 2 이고, 다시 읽으면 칸이 그대로다.
+func TestIterSavesFormat2(t *testing.T) {
+	root := t.TempDir()
+	st := New(now())
+	want := Iter{No: 10, Start: "2026-10-22", Played: "v16", Shipped: "v17", Title: "메인 화면 손질", File: "Docs/History/반복/10-2026-10-22.md"}
+	st.Iters = append(st.Iters, want)
+	if err := Save(root, st, now()); err != nil {
+		t.Fatalf("저장 실패 : %v", err)
+	}
+	raw, _ := os.ReadFile(Path(root))
+	if !strings.Contains(string(raw), `"형식": 2`) {
+		t.Fatalf("반복이 있으면 형식 2 여야 한다 : %s", raw)
+	}
+	back, err := Load(root)
+	if err != nil {
+		t.Fatalf("다시 읽기 실패 : %v", err)
+	}
+	if len(back.Iters) != 1 || back.Iters[0] != want {
+		t.Fatalf("반복 칸이 달라졌다 : %+v", back.Iters)
+	}
+}
+
+// S3 : 형식 3 은 모르는 판이다.
+func TestFormat3IsUnknown(t *testing.T) {
+	root := writeRaw(t, `{"형식": 3, "단계": 9, "판번호": 1}`)
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "모르는 상태 파일 판") {
+		t.Fatalf("형식 3 은 모르는 판이어야 한다 : %v", err)
 	}
 }

@@ -18,8 +18,12 @@ import (
 // RelPath 는 상태 파일 자리다. 이 파일이 정본이다.
 const RelPath = "Docs/Todo/기획상태.json"
 
-// Format 은 지금 상태 파일 모양의 판이다.
-const Format = 1
+// Format 은 반복이 없는 상태 파일 모양의 판이다. FormatIter 는 `반복` 배열이 있는 판이다.
+// 옛 exe 는 모르는 칸을 버린 채 저장하므로, 반복이 있으면 판을 올려 옛 exe 가 멈추게 한다.
+const (
+	Format     = 1
+	FormatIter = 2
+)
 
 // 물음의 상태 값.
 const (
@@ -59,6 +63,16 @@ type Back struct {
 	Why   string `json:"까닭"`
 }
 
+// Iter 는 마지막 단계 뒤 반복 한 회다. `stage iter new` 가 한 줄씩 더한다.
+type Iter struct {
+	No      int    `json:"회"`
+	Start   string `json:"시작일"`
+	Played  string `json:"놀았던판"`
+	Shipped string `json:"올린판,omitempty"`
+	Title   string `json:"한줄,omitempty"`
+	File    string `json:"기록파일"`
+}
+
 // State 는 상태 파일 전체다.
 type State struct {
 	Format     int    `json:"형식"`
@@ -68,6 +82,7 @@ type State struct {
 	Updated    string `json:"고침시각"`
 	Asks       []Ask  `json:"물음"`
 	Backs      []Back `json:"되돌아간기록"`
+	Iters      []Iter `json:"반복,omitempty"`
 }
 
 // Path 는 상태 파일의 실제 경로다.
@@ -103,8 +118,8 @@ func Load(root string) (*State, error) {
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return nil, fmt.Errorf("상태 파일이 깨졌습니다 (%s) : %v", RelPath, err)
 	}
-	if st.Format != Format {
-		return nil, fmt.Errorf("모르는 상태 파일 판입니다 (형식 %d, 이 툴은 %d)", st.Format, Format)
+	if st.Format != Format && st.Format != FormatIter {
+		return nil, fmt.Errorf("모르는 상태 파일 판입니다 (형식 %d, 이 툴은 %d·%d)", st.Format, Format, FormatIter)
 	}
 	if st.Asks == nil {
 		st.Asks = []Ask{}
@@ -112,12 +127,19 @@ func Load(root string) (*State, error) {
 	if st.Backs == nil {
 		st.Backs = []Back{}
 	}
+	if st.Iters == nil {
+		st.Iters = []Iter{}
+	}
 	return &st, nil
 }
 
 // Save 는 상태 파일을 쓴다. 폴더가 없으면 만든다.
 func Save(root string, st *State, now time.Time) error {
 	st.Updated = now.Format(time.RFC3339)
+	st.Format = Format
+	if len(st.Iters) > 0 {
+		st.Format = FormatIter
+	}
 	raw, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return fmt.Errorf("상태를 JSON 으로 못 바꿨습니다 : %v", err)
@@ -356,6 +378,19 @@ func (s *State) DaysIn(now time.Time) int {
 		return 1
 	}
 	return days
+}
+
+// LastIter 는 마지막 반복이다. 반복이 없으면 nil 이다.
+func (s *State) LastIter() *Iter {
+	if len(s.Iters) == 0 {
+		return nil
+	}
+	return &s.Iters[len(s.Iters)-1]
+}
+
+// Iterating 은 반복 중인지 본다. 마지막 단계이고 반복이 하나라도 있어야 한다 (앞 단계로 되돌아가면 판 규칙이 다시 산다).
+func (s *State) Iterating(cfg config.Config) bool {
+	return len(s.Iters) > 0 && s.Stage == len(cfg.Stages)
 }
 
 // Doubt 는 판을 너무 많이 돌아 컨셉을 의심할 때인지 본다.

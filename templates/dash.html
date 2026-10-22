@@ -92,6 +92,22 @@
     </div>
   </div>
 
+  {{if .Iterating}}
+  <div class="card">
+    <h2>⑥ 반복 기록</h2>
+    <table>
+      <tr><th>회</th><th>시작</th><th>놀았던 판</th><th>올린 판</th><th>한 줄</th><th>기록</th></tr>
+      {{range .Iters}}<tr>
+        <td>{{printf "%02d" .No}}</td>
+        <td>{{.Start}}</td>
+        <td>{{.Played}}</td>
+        <td>{{.Shipped}}</td>
+        <td>{{.Title}}</td>
+        <td><a href="{{.Link}}">{{.File}}</a></td>
+      </tr>{{end}}
+    </table>
+  </div>
+  {{else}}
   <div class="card">
     <h2>⑥ 되돌아가는 고리</h2>
     <pre class="mermaid">stateDiagram-v2
@@ -112,6 +128,7 @@
 </pre>
     <p class="no-mark">3 → 4 → 5 → 6 → 3 (불통이면 되돌아간다) · 3판 돌아도 통과 못 하면 1~2단계로.</p>
   </div>
+  {{end}}
 
   <footer>
     {{.BakedAt}} 에 구웠습니다. 이 화면은 사진입니다 — 정본은 <code>Docs/Todo/기획상태.json</code> 입니다.

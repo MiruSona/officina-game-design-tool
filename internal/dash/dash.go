@@ -41,6 +41,17 @@ type DocRow struct {
 	Exists bool
 }
 
+// IterRow 는 반복 기록 한 줄이다. File 은 대시보드 자리에서 본 상대 링크다.
+type IterRow struct {
+	No      int
+	Start   string
+	Played  string
+	Shipped string
+	Title   string
+	File    string
+	Link    string
+}
+
 // Model 은 템플릿에 넣는 값 전부다.
 type Model struct {
 	StageNo    int
@@ -58,6 +69,8 @@ type Model struct {
 	Pillars    []string
 	PillarNote string
 	Docs       []DocRow
+	Iters      []IterRow // 최근 것이 위
+	Iterating  bool      // 반복 중일 때만 고리 자리에 반복 기록을 그린다
 	BakedAt    string
 }
 
@@ -85,6 +98,12 @@ func Build(root string, cfg config.Config, st *state.State, now time.Time) Model
 		m.Asks = append(m.Asks, AskRow{ID: a.ID, Question: a.Question, Status: a.Status, CritCount: len(a.Crit)})
 	}
 	m.AskCount = len(m.Asks)
+	m.Iterating = st.Iterating(cfg)
+	for i := len(st.Iters) - 1; i >= 0; i-- {
+		it := st.Iters[i]
+		m.Iters = append(m.Iters, IterRow{No: it.No, Start: it.Start, Played: it.Played, Shipped: it.Shipped, Title: it.Title, File: it.File})
+	}
+	m.Iters = withLinks(root, paths.Join(root, RelPath), m.Iters)
 	m.Pillars, m.PillarNote = pillars(root, cfg)
 	for _, name := range cfg.DocSkeleton {
 		m.Docs = append(m.Docs, DocRow{Name: name, Exists: docExists(root, cfg, name)})
@@ -101,6 +120,7 @@ func Bake(root string, m Model, outRel string) (string, error) {
 	if !filepath.IsAbs(path) {
 		path = paths.Join(root, outRel)
 	}
+	m.Iters = withLinks(root, path, m.Iters)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", fmt.Errorf("폴더를 못 만들었습니다 (%s) : %v", filepath.Dir(path), err)
 	}
@@ -125,6 +145,19 @@ func Write(w io.Writer, m Model) error {
 		return fmt.Errorf("틀에 값을 못 넣었습니다 : %v", err)
 	}
 	return nil
+}
+
+// withLinks 는 기록 파일 링크를 구운 HTML 자리에서 본 상대 경로로 채운 사본을 돌려준다.
+func withLinks(root, htmlPath string, rows []IterRow) []IterRow {
+	out := make([]IterRow, len(rows))
+	for i, r := range rows {
+		r.Link = r.File
+		if rel, err := filepath.Rel(filepath.Dir(htmlPath), paths.Join(root, r.File)); err == nil {
+			r.Link = filepath.ToSlash(rel)
+		}
+		out[i] = r
+	}
+	return out
 }
 
 // stepClass 는 스테퍼 한 칸의 꾸밈을 정한다.

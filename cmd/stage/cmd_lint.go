@@ -270,14 +270,28 @@ func cmdDone(args []string) error {
 		return quietOrFail(*hook, fail(exitRead, "%v", err))
 	}
 	// 할 일에 「기억 1건」이 늘 들어가므로, 빈 목록은 아직 판이 안 끝났다는 뜻뿐이다.
-	missing := roundTodos(dir, cfg, st)
+	head := "판 끝 할 일이 남았습니다 :"
+	notYet := "아직 판이 안 끝났습니다 — 이번 판 물음이 없거나 판정이 남았습니다."
+	var missing []todo
+	if st.Iterating(cfg) {
+		it := *st.LastIter()
+		head = fmt.Sprintf("반복 %02d 끝 할 일이 남았습니다 :", it.No)
+		notYet = "아직 반복이 안 끝났습니다 — 「고친 것」 이 비었습니다."
+		tpl, tplErr := iterTemplate(dir, cfg)
+		if tplErr != nil {
+			return quietOrFail(*hook, tplErr)
+		}
+		missing = iterTodos(dir, it, tpl, true)
+	} else {
+		missing = roundTodos(dir, cfg, st)
+	}
 	if len(missing) == 0 {
 		if !*hook {
-			fmt.Println("아직 판이 안 끝났습니다 — 이번 판 물음이 없거나 판정이 남았습니다.")
+			fmt.Println(notYet)
 		}
 		return nil
 	}
-	text := todoText(missing)
+	text := todoText(head, missing)
 	if !*hook {
 		// 손으로 친 것은 늘 찍는다. 되풀이를 줄이는 것은 훅뿐이다.
 		fmt.Println(text)
@@ -295,8 +309,8 @@ func cmdDone(args []string) error {
 }
 
 // todoText 는 할 일과 「무엇을 하면 사라지나」를 한 덩이 글로 만든다.
-func todoText(missing []todo) string {
-	lines := []string{"판 끝 할 일이 남았습니다 :"}
+func todoText(head string, missing []todo) string {
+	lines := []string{head}
 	for _, m := range missing {
 		lines = append(lines, fmt.Sprintf("- %s → %s", m.name, m.fix))
 	}
@@ -334,6 +348,9 @@ type todo struct {
 	fix  string
 }
 
+// memoryTodo 는 판·반복 끝에 늘 붙는 「기억 1건」 이다. 기억 저장소를 안 부르므로 툴이 확인할 길이 없다.
+var memoryTodo = todo{"기억 1건 (결정과 공수 눈금)", "툴이 확인 못 합니다. 이 세션에서는 다시 안 뜹니다"}
+
 // roundTodos 는 판 끝 할 일 중 빠진 것을 모은다. 물음이 다 판정된 뒤에만 본다.
 func roundTodos(root string, cfg config.Config, st *state.State) []todo {
 	asks := st.RoundAsks()
@@ -354,7 +371,7 @@ func roundTodos(root string, cfg config.Config, st *state.State) []todo {
 		missing = append(missing, todo{"플레이 기록 한 편", "`" + historyDir + "/` 에 .md 한 편"})
 	}
 	// 기억 저장소를 부르지 않으므로 확인할 길이 없다. 판마다 그냥 다시 묻는다 (설계 그대로).
-	missing = append(missing, todo{"기억 1건 (결정과 공수 눈금)", "툴이 확인 못 합니다. 이 세션에서는 다시 안 뜹니다"})
+	missing = append(missing, memoryTodo)
 	if !newerThan(paths.Join(root, progressDoc), start, false) {
 		missing = append(missing, todo{"진행 상황 문서의 「이미 정한 것」·「지금 할 일」 고치기", "`" + progressDoc + "` 고치기"})
 	}

@@ -94,3 +94,47 @@ func TestPillarsNoteWhenMissing(t *testing.T) {
 		t.Fatalf("컨셉 문서가 없으면 안내만 한다 : %v / %q", got, note)
 	}
 }
+
+// B1 : 반복 둘이면 덩어리 하나에 최근 것이 위, 반복이 없으면 덩어리가 없다.
+func TestWriteIterBlock(t *testing.T) {
+	m := build(t)
+	var plain strings.Builder
+	if err := Write(&plain, m); err != nil {
+		t.Fatalf("굽기 실패 : %v", err)
+	}
+	if strings.Contains(plain.String(), "반복 기록") {
+		t.Fatal("반복이 없으면 덩어리를 안 그린다")
+	}
+	st := state.New(time.Now())
+	st.Iters = []state.Iter{
+		{No: 10, Start: "2026-10-01", Played: "v16", File: "Docs/History/반복/10-2026-10-01.md"},
+		{No: 11, Start: "2026-10-22", Played: "v17", Title: "메인 화면", File: "Docs/History/반복/11-2026-10-22.md"},
+	}
+	st.Stage = 5
+	var back strings.Builder
+	if err := Write(&back, Build(t.TempDir(), config.Default(), st, time.Now())); err != nil {
+		t.Fatalf("굽기 실패 : %v", err)
+	}
+	if strings.Contains(back.String(), "반복 기록") || !strings.Contains(back.String(), "되돌아가는 고리") {
+		t.Fatal("앞 단계로 되돌아간 뒤에는 고리 그대로다")
+	}
+	st.Stage = 9
+	m = Build(t.TempDir(), config.Default(), st, time.Now())
+	if m.Iters[0].Link != "../History/반복/11-2026-10-22.md" {
+		t.Fatalf("링크는 구운 자리에서 본 상대 경로다 : %q", m.Iters[0].Link)
+	}
+	if len(m.Iters) != 2 || m.Iters[0].No != 11 {
+		t.Fatalf("최근 것이 위여야 한다 : %+v", m.Iters)
+	}
+	var sb strings.Builder
+	if err := Write(&sb, m); err != nil {
+		t.Fatalf("굽기 실패 : %v", err)
+	}
+	html := sb.String()
+	if strings.Count(html, "반복 기록") != 1 || strings.Index(html, "11-2026-10-22") > strings.Index(html, "10-2026-10-01") {
+		t.Fatalf("덩어리 하나 · 최근 것 위가 아니다")
+	}
+	if strings.Contains(html, "되돌아가는 고리") {
+		t.Fatal("반복 중에는 고리 덩어리 자리를 반복 기록이 쓴다 (여섯 덩어리 상한)")
+	}
+}

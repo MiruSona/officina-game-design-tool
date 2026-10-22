@@ -55,6 +55,7 @@ type showJSON struct {
 	Fail      int    `json:"불통"`
 	Rest      int    `json:"남음"`
 	Doubt     bool   `json:"컨셉의심"`
+	NowIter   int    `json:"지금반복"`
 }
 
 // cmdShow 는 지금 단계와 이번 판 물음을 보여준다. 아무것도 안 고친다.
@@ -104,6 +105,9 @@ func printShowJSON(cfg config.Config, st *state.State) error {
 		Rest:      rest,
 		Doubt:     st.Doubt(cfg),
 	}
+	if it := st.LastIter(); it != nil {
+		out.NowIter = it.No
+	}
 	if s, ok := cfg.Stage(st.Stage); ok {
 		out.StageDone = s.Done
 	}
@@ -121,10 +125,16 @@ func printShow(cfg config.Config, st *state.State, now time.Time) {
 	if s, ok := cfg.Stage(st.Stage); ok {
 		fmt.Printf("끝났다고 보는 기준 : %s\n", s.Done)
 	}
+	if it := st.LastIter(); it != nil {
+		fmt.Printf("반복 %02d · %s 부터 · 놀았던 판 %s · %s\n", it.No, it.Start, it.Played, it.File)
+	}
+	iterating := st.Iterating(cfg)
 	asks := st.RoundAsks()
 	pass, fail2, rest := st.Counts()
-	fmt.Println()
-	if len(asks) == 0 {
+	if len(asks) > 0 || !iterating {
+		fmt.Println()
+	}
+	if len(asks) == 0 && !iterating {
 		fmt.Println("이번 판 물음이 아직 없습니다 — `stage ask \"<물음>\" --crit \"…\"` 로 적습니다.")
 	}
 	if len(asks) > 0 {
@@ -144,7 +154,11 @@ func printShow(cfg config.Config, st *state.State, now time.Time) {
 	if st.Doubt(cfg) {
 		fmt.Printf("%d판째입니다 — 이번에도 통과 못 하면 컨셉이나 기둥을 의심할 때입니다.\n", st.Round)
 	}
-	fmt.Println("되돌아가는 조건 : 모양이 틀렸으면 3단계 · 숫자만 틀렸으면 5단계 · 기준이 틀렸으면 4단계.")
+	if iterating {
+		fmt.Println("새 시스템은 「기능목록」 Won't 표에 대 보고 사용자가 정합니다.")
+	} else {
+		fmt.Println("되돌아가는 조건 : 모양이 틀렸으면 3단계 · 숫자만 틀렸으면 5단계 · 기준이 틀렸으면 4단계.")
+	}
 	fmt.Println("단계를 넘기는 것은 사용자만 합니다.")
 }
 
