@@ -57,7 +57,7 @@ func rowsFor(claims ...string) []Row {
 func TestRunNLIThreeAndFourCells(t *testing.T) {
 	srv := fakeNLI(t, nil)
 	defer srv.Close()
-	oc := RunNLI(srv.URL, rowsFor("세칸", "넷칸"), 5*time.Second)
+	oc := RunNLI(srv.URL, rowsFor("세칸", "넷칸"), 5*time.Second, false)
 	three, four := oc.Verdicts["a"], oc.Verdicts["b"]
 	if three.Problem != "" || three.Letter != "A" || three.ProbA() != 0.7 || three.ProbB() != 0.2 || len(three.Probs) != 3 {
 		t.Fatalf("3칸 답 = %+v", three)
@@ -77,7 +77,7 @@ func TestRunNLIThreeAndFourCells(t *testing.T) {
 func TestRunNLIBadRowsBecomeProblemsAndContinue(t *testing.T) {
 	srv := fakeNLI(t, nil)
 	defer srv.Close()
-	oc := RunNLI(srv.URL, rowsFor("합틀림", "칸빠짐", "범위밖", "터짐", "세칸"), 5*time.Second)
+	oc := RunNLI(srv.URL, rowsFor("합틀림", "칸빠짐", "범위밖", "터짐", "세칸"), 5*time.Second, false)
 	for id, want := range map[string]string{"a": "합이", "b": "빠짐", "c": "0~1 밖", "d": "HTTP 500"} {
 		if !strings.Contains(oc.Verdicts[id].Problem, want) {
 			t.Fatalf("줄 %s 의 Problem 에 %q 가 있어야 한다 : %+v", id, want, oc.Verdicts[id])
@@ -94,7 +94,7 @@ func TestRunNLIBadRowsBecomeProblemsAndContinue(t *testing.T) {
 func TestRunNLITimeoutMarksRemainingRows(t *testing.T) {
 	srv := fakeNLI(t, nil)
 	defer srv.Close()
-	oc := RunNLI(srv.URL, rowsFor("느림", "세칸"), 150*time.Millisecond)
+	oc := RunNLI(srv.URL, rowsFor("느림", "세칸"), 150*time.Millisecond, false)
 	if !strings.Contains(oc.ExitErr, "안 끝났습니다") {
 		t.Fatalf("기다림을 넘기면 ExitErr 에 까닭이 있어야 한다 : %q", oc.ExitErr)
 	}
@@ -115,7 +115,7 @@ func TestRunNLISendsLabelSetWithoutHint(t *testing.T) {
 	if p.Hint() == "" {
 		t.Fatal("시험 짝에는 힌트가 있어야 한다 (전제)")
 	}
-	RunNLI(srv.URL+"/", []Row{NLIRowOf(p)}, 5*time.Second)
+	RunNLI(srv.URL+"/", []Row{NLIRowOf(p)}, 5*time.Second, false)
 	if len(got) != 1 {
 		t.Fatalf("요청 1번이어야 한다 : %v", got)
 	}
@@ -139,7 +139,7 @@ func TestRunNLIDoesNotFollowRedirect(t *testing.T) {
 		http.Redirect(w, r, target.URL+"/judge", http.StatusTemporaryRedirect)
 	}))
 	defer redirector.Close()
-	oc := RunNLI(redirector.URL, rowsFor("세칸"), 5*time.Second)
+	oc := RunNLI(redirector.URL, rowsFor("세칸"), 5*time.Second, false)
 	if !strings.Contains(oc.Verdicts["a"].Problem, "HTTP 307") {
 		t.Fatalf("307 은 따라가지 말고 Problem 이어야 한다 : %+v", oc.Verdicts["a"])
 	}

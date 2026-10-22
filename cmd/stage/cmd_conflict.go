@@ -58,6 +58,7 @@ type conflictRun struct {
 	judgeBy   string // 고른 판정기 (localharness · nli). 판정 길이 아니면 빈 글
 	model     string // nli 판정 서버가 health 로 알린 모델 (id · 이름)
 	healthErr string // nli health 가 실패한 자세한 까닭. last.json judge_error 에 남긴다
+	split     bool   // nli 길에서 근거를 토막으로 쪼개 묻나 (기본 켬 · --no-split 로 끔)
 	hintRunes int    // 모든 짝의 힌트 글자 수 합 (last.json 의 평균 재료)
 	hintOff   int    // 수치표 꼴이라 힌트를 끈 짝 수
 	outcome   conflict.Outcome
@@ -77,6 +78,8 @@ type hit struct {
 	A     string  `json:"a"`
 	B     string  `json:"b"`
 	Prob  float64 `json:"prob"`
+	// Split 은 nli 쪼개 묻기 기록이다 : 원래 꼴 b · 토막마다 글과 b · 이긴 토막 순번(-1 이면 원래 꼴). 끈 판은 없다.
+	Split *conflict.SplitRecord `json:"split,omitempty"`
 }
 
 // conflictJSON 은 `--json` 출력이다.
@@ -88,10 +91,12 @@ type conflictJSON struct {
 	Skipped       string `json:"skipped"`
 	Warn          []hit  `json:"warn"`
 	Ambiguous     []hit  `json:"ambiguous"`
-	Tidy          []hit  `json:"tidy"` // 정리 필요 (D ≥ 0.8). support 로 되돌아간 판은 빈 배열
-	Kind          string `json:"kind"` // 판정기에 넘긴 물음 종류 (conflict · support · nli). 판정 안 한 판은 빈 글
-	JudgeBy       string `json:"판정기"`  // localharness · nli. 판정 길이 아니면 빈 글
-	Model         string `json:"모델"`   // nli 판정 서버의 모델 (id · 이름). localharness 는 빈 글
+	Tidy          []hit  `json:"tidy"`  // 정리 필요 (D ≥ 0.8). support 로 되돌아간 판은 빈 배열
+	Kind          string `json:"kind"`  // 판정기에 넘긴 물음 종류 (conflict · support · nli). 판정 안 한 판은 빈 글
+	JudgeBy       string `json:"판정기"`   // localharness · nli. 판정 길이 아니면 빈 글
+	Model         string `json:"모델"`    // nli 판정 서버의 모델 (id · 이름). localharness 는 빈 글
+	Split         bool   `json:"split"` // nli 길에서 근거를 토막으로 쪼개 물었나
+	Asks          int    `json:"asks"`  // 판정 서버에 실제로 물은 횟수 (nli 길만 · 토막 포함)
 	Sent          string `json:"sent"`
 	SecretDropped int    `json:"secret_dropped"`
 	Excluded      int    `json:"excluded"` // 메타·근거 줄이라 후보에서 뺀 문장 수
@@ -110,6 +115,7 @@ func cmdConflict(args []string) error {
 	out := fs.String("out", "", "후보 쌍 jsonl 을 이 자리에도 쓴다 (저장소 뿌리 아래만)")
 	fresh := fs.Bool("fresh", false, "판정기의 지난 기록을 안 쓰고 다시 묻는다 (--judge 와 같이)")
 	judgeByFlag := fs.String("judge-by", "", "이번 판만 판정기를 고른다 (localharness · nli). 설정 「어긋남판정기」 보다 먼저")
+	noSplit := fs.Bool("no-split", false, "nli 판정에서 근거를 토막으로 쪼개 묻지 않는다 (원래 꼴만 한 번)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -157,6 +163,11 @@ func cmdConflict(args []string) error {
 			run.judgeBy = *judgeByFlag
 		}
 	}
+	// 쪼개 묻기는 nli 길 실측만 있어 그 길에서만 켠다 (쪼개묻기 설계 결정 6 · 10).
+	run.split = run.judgeBy == config.JudgeByNLI && !*noSplit
+	if *noSplit && run.judgeBy != config.JudgeByNLI {
+		fmt.Fprintln(os.Stderr, "--no-split 은 nli 판정 때만 씁니다 — 이번엔 무시합니다")
+	}
 	for _, d := range docs {
 		run.docs = append(run.docs, d.Name)
 	}
@@ -196,7 +207,14 @@ func cmdConflict(args []string) error {
 	}
 	if run.judgeBy == config.JudgeByNLI {
 		run.kind = conflict.BackendNLI
-		run.outcome = conflict.RunNLI(cfg.JudgeURL, run.rows, nliWait(len(run.rows)))
+		run.outcome = conflict.RunNLI(cfg.JudgeURL, run.rows, nliWait(conflict.NLIAsks(run.rows, run.split)), run.split)
+		if run.outcome.Capped > 0 {
+			fmt.Fprintf(os.Stderr, "근거 토막이 %d개를 넘은 짝 %d개 — 앞 %d토막 + 원래 꼴만 물었습니다\n",
+				conflict.MaxPieces, run.outcome.Capped, conflict.MaxPieces)
+		}
+		if run.outcome.ExitErr != "" { // nli 길의 ExitErr 는 시간 초과뿐이다
+			fmt.Fprintln(os.Stderr, timeoutHint(run.split))
+		}
 	} else {
 		runJudge(run, exe, *fresh)
 	}
@@ -211,6 +229,14 @@ func cmdConflict(args []string) error {
 	}
 	printOutcome(run, *asJSON)
 	return writeLast(run)
+}
+
+// timeoutHint 는 nli 판정이 시간 안에 안 끝났을 때 stderr 에 찍는 안내다. 쪼개 묻기는 물음이 3~4배라 끄는 길도 알린다.
+func timeoutHint(split bool) string {
+	if split {
+		return "판정이 시간 안에 안 끝났습니다 — --limit 을 줄이거나 --no-split 으로 다시 돌려 보세요"
+	}
+	return "판정이 시간 안에 안 끝났습니다 — --limit 을 줄여 다시 돌려 보세요"
 }
 
 // runJudge 는 conflict 물음으로 판정기를 부른다. 판정기가 conflict 를 모르면(옛 하네스) support 로 한 번만 되돌아 묻는다.
@@ -491,6 +517,9 @@ func writeLast(run *conflictRun) error {
 		"hint_avg_runes": hintAvgRunes(run),
 		"hint_off":       run.hintOff,
 		"judge_error":    judgeError(run),
+		"split":          run.split,
+		"asks":           run.outcome.Asks,
+		"split_capped":   run.outcome.Capped,
 		"cmd":            os.Args,
 		"ms":             time.Since(run.started).Milliseconds(),
 	}
@@ -593,7 +622,7 @@ func grade(run *conflictRun) (graded, int) {
 		judged++
 		p := run.pairs[r.ID]
 		h := hit{ID: r.ID, ADoc: p.ADoc, ALine: p.A.Line, ACell: p.A.Seq, BDoc: p.BDoc, BLine: p.B.Line, BCell: p.B.Seq,
-			A: r.Evidence, B: r.Claim, Prob: v.ProbB()}
+			A: r.Evidence, B: r.Claim, Prob: v.ProbB(), Split: v.Split}
 		// nli 길은 정리 필요를 안 매긴다 (10-19 실측에서 A ≥ .89 가 중복을 못 잡았다). 그 짝은 B 로만 간다.
 		tidy := v.ProbD()
 		switch {
@@ -616,7 +645,7 @@ func printJSON(run *conflictRun, g graded, judged int) {
 	out := conflictJSON{
 		Pairs: len(run.rows), Total: run.total, Judged: judged, Unread: run.outcome.Unread,
 		Skipped: run.skipped, Warn: g.warn, Ambiguous: g.amb, Tidy: g.tidy, Kind: run.kind, Sent: run.sent,
-		JudgeBy: run.judgeBy, Model: run.model,
+		JudgeBy: run.judgeBy, Model: run.model, Split: run.split, Asks: run.outcome.Asks,
 		SecretDropped: len(run.dropped), Excluded: excludedCount(run), MS: time.Since(run.started).Milliseconds(),
 	}
 	if out.Skipped == "" && len(run.outcome.Verdicts) == 0 {
@@ -641,6 +670,9 @@ func printHits(hits []hit, letter string) {
 		fmt.Printf("│ %s:%d:%d ↔ %s:%d:%d   %s %.2f\n", h.ADoc, h.ALine, h.ACell, h.BDoc, h.BLine, h.BCell, letter, h.Prob)
 		fmt.Printf("│   A : 「%s」\n", cut(h.A, showRunes))
 		fmt.Printf("│   B : 「%s」\n", cut(h.B, showRunes))
+		if h.Split != nil && h.Split.Best >= 0 {
+			fmt.Printf("│   b 낸 토막 : 「%s」 (원래 꼴 %s %.2f)\n", cut(h.Split.Pieces[h.Split.Best].Text, showRunes), letter, h.Split.BaseB)
+		}
 	}
 }
 

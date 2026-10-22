@@ -102,8 +102,9 @@ func TestConflictNLINoTidy(t *testing.T) {
 	if strings.Contains(got.Ambiguous[0].B, "[다른 토막") {
 		t.Fatalf("NLI 길의 claim 에는 힌트가 없다 : %q", got.Ambiguous[0].B)
 	}
-	if len(fake.reqs) != 4 {
-		t.Fatalf("요청 4번이어야 한다 : %d", len(fake.reqs))
+	// 쪼개 묻기 기본 켬 : 짝 4 × (원래 꼴 1 + 토막 1). 이 시험 문장은 이음 기호가 없어 토막이 하나다.
+	if len(fake.reqs) != 8 || !got.Split || got.Asks != 8 {
+		t.Fatalf("요청 8번 · split 켬이어야 한다 : %d · %+v", len(fake.reqs), got)
 	}
 	for _, req := range fake.reqs {
 		claim, _ := req["claim"].(string)
@@ -128,6 +129,10 @@ func TestConflictNLINoTidy(t *testing.T) {
 	if strings.Contains(text, "├ 정리 필요") || strings.Contains(text, "A 0.93") || !strings.Contains(text, "정리 필요 0 · 조용 2)") ||
 		!strings.Contains(text, "· 판정 nli · 모델 nli-test (시험 모델))") || strings.Contains(text, "(D ≥") {
 		t.Fatalf("사람용 출력이 다르다\n%s", text)
+	}
+	// 원래 꼴이 이긴 경고(토막과 b 가 같음)에는 「b 낸 토막」 줄이 없다.
+	if !strings.Contains(text, "B 0.92") || strings.Contains(text, "b 낸 토막") {
+		t.Fatalf("원래 꼴이 이긴 경고엔 토막 줄이 없어야 한다\n%s", text)
 	}
 }
 
@@ -249,5 +254,72 @@ func TestGradeNLINeverTidy(t *testing.T) {
 	}
 	if g.warn[0].ID != "warn" || g.amb[0].ID != "amb" {
 		t.Fatalf("통이 다르다 : %+v · %+v", g.warn, g.amb)
+	}
+}
+
+// 쪼개묻기 설계 결정 6·7 : nli 길 기본 켬 · 이긴 토막이 경고 줄 split 칸과 사람용 출력에 · --no-split 은 원래 꼴만 · last.json 칸.
+func TestConflictNLISplitDefaultAndNoSplit(t *testing.T) {
+	root := pairsRepo(t)
+	var mu sync.Mutex
+	asks := 0
+	// 머리 없는 근거(= 토막)와 「7초」 주장일 때만 b .85 — 원래 꼴은 .6(애매)이라 토막이 이겨야 경고로 오른다.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			_, _ = w.Write([]byte(`{"ok":true,"model":"nli-test"}`))
+			return
+		}
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		mu.Lock()
+		asks++
+		mu.Unlock()
+		claim, _ := req["claim"].(string)
+		ev, _ := req["evidence"].(string)
+		switch {
+		case strings.Contains(claim, "7초") && !strings.HasPrefix(ev, "["):
+			_, _ = w.Write([]byte(`{"a":0.1,"b":0.85,"c":0.05,"model":"nli-test"}`))
+		case strings.Contains(claim, "7초"):
+			_, _ = w.Write([]byte(`{"a":0.3,"b":0.6,"c":0.1,"model":"nli-test"}`))
+		default:
+			_, _ = w.Write([]byte(`{"a":0.5,"b":0.05,"c":0.45,"model":"nli-test"}`))
+		}
+	}))
+	defer srv.Close()
+	setNLIConfig(t, root, srv.URL)
+	out, code := runConflict(t, root, "--judge", "--json")
+	got := decodeConflictJSON(t, out)
+	if code != exitOK || !got.Split || got.Asks != 8 || len(got.Warn) != 1 || len(got.Ambiguous) != 0 {
+		t.Fatalf("기본 켬이면 토막이 이겨 경고로 올라야 한다 (%d) : %+v", code, got)
+	}
+	sp := got.Warn[0].Split
+	if sp == nil || sp.Best != 0 || sp.BaseB != 0.6 || len(sp.Pieces) != 1 || sp.Pieces[0].B != 0.85 || got.Warn[0].Prob != 0.85 {
+		t.Fatalf("경고 줄 split 칸 = %+v", sp)
+	}
+	last := readLastJSON(t, root)
+	if last["split"] != true || last["asks"] != float64(8) || last["split_capped"] != float64(0) {
+		t.Fatalf("last.json 의 split·asks·split_capped : %v", last)
+	}
+	text, _ := runConflict(t, root, "--judge")
+	if !strings.Contains(text, "│   b 낸 토막 : 「") || !strings.Contains(text, "(원래 꼴 B 0.60)") {
+		t.Fatalf("사람용 출력에 이긴 토막 줄이 있어야 한다\n%s", text)
+	}
+	asks = 0
+	out, _ = runConflict(t, root, "--judge", "--json", "--no-split")
+	got = decodeConflictJSON(t, out)
+	if got.Split || got.Asks != 4 || asks != 4 || len(got.Warn) != 0 || len(got.Ambiguous) != 1 || got.Ambiguous[0].Split != nil {
+		t.Fatalf("--no-split 은 원래 꼴만 한 번 : 물음 %d : %+v", asks, got)
+	}
+	if strings.Contains(out, `"split":{`) {
+		t.Fatalf("끈 판의 줄에는 split 칸이 없다\n%s", out)
+	}
+}
+
+// --no-split 은 localharness 길에서 무시된다 (그 길은 쪼개 묻지 않는다).
+func TestConflictNoSplitIgnoredOffNLI(t *testing.T) {
+	root := pairsRepo(t)
+	t.Setenv("PATH", "")
+	out, code := runConflict(t, root, "--judge", "--json", "--no-split")
+	if got := decodeConflictJSON(t, out); code != exitOK || got.Split || got.Asks != 0 {
+		t.Fatalf("localharness 길은 split 이 꺼져 있어야 한다 (%d) : %+v", code, got)
 	}
 }

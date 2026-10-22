@@ -103,17 +103,52 @@ type nliLine struct {
 	Problem string             `json:"problem,omitempty"`
 	Backend string             `json:"backend"`
 	Model   string             `json:"model"`
+	Split   *SplitRecord       `json:"split,omitempty"` // 쪼개 묻기 기록. 끈 판은 없다
+}
+
+// PieceAnswer 는 근거 토막 하나를 물은 답의 b 다.
+type PieceAnswer struct {
+	Text string  `json:"text"`
+	B    float64 `json:"b"`
+}
+
+// SplitRecord 는 쪼개 묻기 한 줄의 기록이다 : 원래 꼴 b · 토막마다 b · 이긴 토막 순번(원래 꼴이 이기면 -1) · 상한으로 버린 수 ·
+// 목록 꼴이라 안 물은 토막 수.
+type SplitRecord struct {
+	BaseB   float64       `json:"base_b"`
+	Pieces  []PieceAnswer `json:"pieces"`
+	Best    int           `json:"best"`
+	Capped  int           `json:"capped,omitempty"`
+	Skipped int           `json:"skipped,omitempty"`
+}
+
+// NLIAsks 는 판정 서버에 물을 횟수다. 쪼개 묻기면 줄마다 원래 꼴 1 + 토막 수다. 기다림을 이것으로 잰다.
+func NLIAsks(rows []Row, split bool) int {
+	if !split {
+		return len(rows)
+	}
+	n := 0
+	for _, r := range rows {
+		pieces, _, _ := EvidencePieces(r.Evidence)
+		n += 1 + len(pieces)
+	}
+	return n
 }
 
 // RunNLI 는 줄마다 판정 서버에 묻는다. 줄 하나가 실패하면 그 줄의 Problem 에 남기고 다음 줄로 간다.
+// split 이면 근거를 토막으로 쪼개 토막마다 한 번 더 묻고 max b 답을 판정으로 쓴다 (쪼개묻기 설계 3절).
 // 전체 기다림을 넘기면 남은 줄은 모두 Problem 이 되고 ExitErr 에 까닭이 찍힌다.
-func RunNLI(baseURL string, rows []Row, wait time.Duration) Outcome {
+func RunNLI(baseURL string, rows []Row, wait time.Duration, split bool) Outcome {
 	ctx, cancel := context.WithTimeout(context.Background(), wait)
 	defer cancel()
 	oc := Outcome{Verdicts: map[string]Verdict{}}
 	for _, r := range rows {
 		started := time.Now()
-		v, model := askNLI(ctx, baseURL, r)
+		v, model := askNLI(ctx, baseURL, r.Evidence, r.Claim)
+		oc.Asks++
+		if split && v.Problem == "" {
+			v, model = askPieces(ctx, baseURL, r, v, model, &oc)
+		}
 		v.ID = r.ID
 		v.MS = time.Since(started).Milliseconds()
 		if ctx.Err() != nil && v.Problem != "" {
@@ -121,7 +156,7 @@ func RunNLI(baseURL string, rows []Row, wait time.Duration) Outcome {
 		}
 		oc.Verdicts[r.ID] = v
 		raw, _ := json.Marshal(nliLine{ID: v.ID, Letter: v.Letter, Prob: v.Prob, Probs: v.Probs, MS: v.MS,
-			Problem: v.Problem, Backend: BackendNLI, Model: model})
+			Problem: v.Problem, Backend: BackendNLI, Model: model, Split: v.Split})
 		oc.Accepted = append(oc.Accepted, raw...)
 		oc.Accepted = append(oc.Accepted, '\n')
 	}
@@ -131,9 +166,36 @@ func RunNLI(baseURL string, rows []Row, wait time.Duration) Outcome {
 	return oc
 }
 
-// askNLI 는 한 줄을 묻고 판정과 답한 모델 id 를 돌려준다. 실패는 Verdict.Problem 에 담는다.
-func askNLI(ctx context.Context, baseURL string, r Row) (Verdict, string) {
-	body, err := json.Marshal(nliRequest{Evidence: r.Evidence, Claim: r.Claim, LabelSet: nliLabelSet})
+// askPieces 는 근거 토막마다 주장 통째를 묻고 b 가 가장 큰 답을 판정으로 고른다. 같으면 원래 꼴(base)이 앞선다.
+// 토막 물음 하나라도 실패하면 줄 전체가 Problem 이다 — 반만 물은 max 는 b 를 낮게 본다 (설계 결정 8).
+func askPieces(ctx context.Context, baseURL string, r Row, base Verdict, model string, oc *Outcome) (Verdict, string) {
+	pieces, capped, skipped := EvidencePieces(r.Evidence)
+	if capped > 0 {
+		oc.Capped++
+	}
+	rec := &SplitRecord{BaseB: base.ProbB(), Pieces: []PieceAnswer{}, Best: -1, Capped: capped, Skipped: skipped}
+	best := base
+	for i, p := range pieces {
+		v, m := askNLI(ctx, baseURL, p, r.Claim)
+		oc.Asks++
+		if v.Problem != "" {
+			return Verdict{Problem: fmt.Sprintf("토막 %d 물음 실패 : %s", i+1, v.Problem)}, model
+		}
+		rec.Pieces = append(rec.Pieces, PieceAnswer{Text: p, B: v.ProbB()})
+		if v.ProbB() > best.ProbB() {
+			best, rec.Best = v, i
+		}
+		if m != "" {
+			model = m
+		}
+	}
+	best.Split = rec
+	return best, model
+}
+
+// askNLI 는 근거·주장 한 쌍을 묻고 판정과 답한 모델 id 를 돌려준다. 실패는 Verdict.Problem 에 담는다.
+func askNLI(ctx context.Context, baseURL, evidence, claim string) (Verdict, string) {
+	body, err := json.Marshal(nliRequest{Evidence: evidence, Claim: claim, LabelSet: nliLabelSet})
 	if err != nil {
 		return Verdict{Problem: "요청을 못 만듦 : " + err.Error()}, ""
 	}

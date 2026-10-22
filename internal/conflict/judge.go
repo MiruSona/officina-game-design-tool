@@ -52,6 +52,7 @@ type Verdict struct {
 	Probs   map[string]float64 `json:"probs"`
 	MS      int64              `json:"ms"`
 	Problem string             `json:"problem"`
+	Split   *SplitRecord       `json:"-"` // NLI 쪼개 묻기 기록. 판정기 stdout 에서는 안 읽는다
 }
 
 // ProbB 는 「반대(B)」 확률이다. probs 가 있으면 그것을, 없으면 letter 가 B 일 때의 prob 을 쓴다.
@@ -87,6 +88,8 @@ type Outcome struct {
 	ExitErr     string // 종료 코드 ≠ 0 이거나 시간이 넘었을 때의 까닭. 읽힌 줄이 있으면 참고용이다
 	Accepted    []byte // 읽힌 판정 JSON 줄만 모은 것 (결과 파일용). JSON 아닌 줄은 안 들어간다
 	UnknownKind bool   // 판정기가 --kind 값을 몰라 종료 1 — 옛 하네스다. support 로 한 번 되돌아 묻는다
+	Asks        int    // NLI 판정 서버에 실제로 물은 횟수 (쪼개 묻기 토막 포함)
+	Capped      int    // 토막 상한(MaxPieces)에 걸려 앞 토막만 물은 줄 수
 }
 
 // unknownKindMark 는 하네스가 모르는 --kind 를 받았을 때 stderr 에 찍는 글의 머리다.

@@ -110,7 +110,7 @@ done 이 보는 절 이름 「고친 것」 · 「미룬 것」 · 「넘긴 것
 상태를 정적 HTML 한 장으로 굽는다 (기본 : Docs/Todo/대시보드.html).
 구운 파일은 사진이다 — 정본은 상태 파일이다. gitignore 에 넣어 둔다.
 `,
-	"conflict": `stage conflict [--changed] [--judge] [--pairs-only] [--json] [--limit N] [--out <jsonl>] [--fresh] [--judge-by localharness|nli]
+	"conflict": `stage conflict [--changed] [--judge] [--pairs-only] [--json] [--limit N] [--out <jsonl>] [--fresh] [--judge-by localharness|nli] [--no-split]
 
 기획 문서 폴더 바로 아래 NN-이름.md 끼리 낱말이 겹치는 문장 짝을 추린다. **기본은 후보 쌍만 찍는다**
 (판정은 손질 3차까지 통과선 미달이라 접음 · 2026-10-08). --judge 를 주면 PATH 의 localharness 로
@@ -127,6 +127,7 @@ done 이 보는 절 이름 「고친 것」 · 「미룬 것」 · 「넘긴 것
   --fresh       판정기의 지난 기록을 안 쓰고 다시 묻는다 (--judge 와 같이 · 없이 주면 stderr 에 알리고 무시)
   --judge-by X  이번 판만 판정기를 고른다 (localharness · nli). 기획설정.json "어긋남판정기" 보다 먼저.
                 nli 는 "판정서버"(기본 http://127.0.0.1:8092 · 루프백만)에 묻고, 답이 없으면 「판정 건너뜀」
+  --no-split    nli 판정에서 근거를 토막으로 쪼개 묻지 않는다 (기본은 원래 꼴 + 토막마다 묻고 가장 큰 b 를 씀)
 종료 : 0 잘 됨(경고·건너뜀 포함) · 1 쓰는 법 · 3 폴더·git 못 읽음 · 4 기록 못 씀 · 5 설정 깨짐
 `,
 }
